@@ -341,8 +341,11 @@ def main() -> None:
     ap.add_argument("--cap", type=float, default=2.0, help="USD at list price, all providers together")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--arms", nargs="*", help="subset of arm names")
+    ap.add_argument("--skip-provider", nargs="*", default=[], help="providers to leave out, e.g. anthropic")
     a = ap.parse_args()
-    arms = [x for x in ARMS if not a.arms or x.name in a.arms]
+    arms = [x for x in ARMS if (not a.arms or x.name in a.arms) and x.provider not in a.skip_provider]
+    if not arms:
+        raise SystemExit("no arms selected: check --arms / --skip-provider")
     prompts = select_prompts(a.prompts, a.seed)
     print(f"{len(prompts)} prompts x {len(arms)} arms, cap ${a.cap:.2f}", flush=True)
     collect(prompts, arms, a.cap)
