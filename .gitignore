@@ -13,3 +13,9 @@ hf_cache/
 data/clean/
 # Generated research evaluation outputs
 results/
+
+
+.env 
+*.env 
+# secrets
+.env
