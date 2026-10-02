@@ -15,11 +15,12 @@ Notes:    A prompt is "complete" when every option in the run answered it; only 
           the wide table, because episodes need an outcome for every option. Prompts keep the RouterBench
           split, so there is no train/test leakage.
 
-    python -m data.depth_dataset
+    python -m data.depth_dataset --skip-provider groq   # table without gpt-oss (Groq daily limit)
 """
 
 from __future__ import annotations
 
+import argparse
 import json
 import platform
 import subprocess
@@ -75,10 +76,11 @@ def git_commit() -> str:
         return "unknown"
 
 
-def build(out_dir: Path = DEPTH_DIR) -> dict:
+def build(out_dir: Path = DEPTH_DIR, skip_providers: tuple[str, ...] = ()) -> dict:
+    """outcomes.parquet keeps every successful call; table.parquet uses the options not skipped."""
     rows, ok = latest_successful()
     prompts = all_prompts()
-    table = wide_table(ok, prompts)
+    table = wide_table(ok[~ok["provider"].isin(skip_providers)], prompts)
     out_dir.mkdir(parents=True, exist_ok=True)
     ok.to_parquet(out_dir / "outcomes.parquet", index=False)
     table.to_parquet(out_dir / "table.parquet", index=False)
@@ -113,6 +115,8 @@ def build(out_dir: Path = DEPTH_DIR) -> dict:
             "complete_by_split": table["split"].value_counts().to_dict() if len(table) else {},
             "complete_by_task": table["source"].value_counts().to_dict() if len(table) else {},
             "options_collected": sorted(used),
+            "options_in_table": sorted(set(ok.loc[~ok["provider"].isin(skip_providers), "arm"])),
+            "providers_left_out_of_table": list(skip_providers),
         },
         "spend_usd_list_price": round(float(rows["cost_usd"].sum()), 4),
     }
@@ -121,5 +125,7 @@ def build(out_dir: Path = DEPTH_DIR) -> dict:
 
 
 if __name__ == "__main__":
-    m = build()
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--skip-provider", nargs="*", default=[], help="providers left out of table.parquet")
+    m = build(skip_providers=tuple(ap.parse_args().skip_provider))
     print(json.dumps(m["counts"], indent=2), f"\nspend ${m['spend_usd_list_price']}")
