@@ -44,6 +44,8 @@ PRICE_DATE = "2026-10-19"
 MAX_OUTPUT_TOKENS = 8192
 # Groq counts the output limit toward its 8,000 tokens-per-minute cap and rejects larger requests (HTTP 413)
 MAX_OUTPUT_TOKENS_BY_PROVIDER = {"groq": 6000}
+# concurrent calls per provider; Groq is held low by its tokens-per-minute limit
+WORKERS = {"groq": 3, "gemini": 12, "openai": 8, "openrouter": 6, "kimi": 6, "anthropic": 6}
 
 
 @dataclass(frozen=True)
@@ -353,31 +355,37 @@ def run_one(arm: Arm, row: pd.Series, env: dict, call: Callable = call_arm, retr
 
 
 def collect(prompts: pd.DataFrame, arms: Sequence[Arm], cap: float, out_path: Path = OUT_PATH,
-            env: dict | None = None, call: Callable = call_arm, workers_per_provider: int = 4,
+            env: dict | None = None, call: Callable = call_arm, workers_per_provider: int | dict = 4,
             chunk: int = 10) -> Budget:
+    """Prompt-major: every option answers a chunk of prompts before the next chunk starts, so a stop at the
+    cap leaves whole prompts. Within a chunk all providers run at once, each limited to its own number of
+    concurrent calls (workers_per_provider, an int or {provider: n}), so slow models do not hold up fast ones."""
     env = env if env is not None else load_env()
     out_path.parent.mkdir(parents=True, exist_ok=True)
     done = done_keys(out_path)
     budget = Budget(cap, spent(out_path))
     lock = threading.Lock()
+    limit = {a.provider: (workers_per_provider.get(a.provider, 4) if isinstance(workers_per_provider, dict)
+                          else workers_per_provider) for a in arms}
+    slots = {prov: threading.Semaphore(n) for prov, n in limit.items()}
 
     def work(arm: Arm, row: pd.Series) -> None:
-        if not budget.can_spend():
-            return
-        o = run_one(arm, row, env, call)
-        budget.add(o.cost_usd)
-        with lock, out_path.open("a") as f:
-            f.write(json.dumps(asdict(o)) + "\n")
-
-    for start in range(0, len(prompts), chunk):  # prompt-major: a chunk gets every arm before the next chunk
-        block = prompts.iloc[start:start + chunk]
-        for arm in arms:  # cheapest first within a chunk
+        with slots[arm.provider]:
             if not budget.can_spend():
-                print(f"cap ${cap:.2f} reached at prompt {start}; stopping", flush=True)
-                return budget
-            todo = [row for _, row in block.iterrows() if (row["prompt_id"], arm.name) not in done]
-            with ThreadPoolExecutor(max_workers=workers_per_provider) as pool:
-                list(pool.map(lambda r: work(arm, r), todo))
+                return
+            o = run_one(arm, row, env, call)
+            budget.add(o.cost_usd)
+            with lock, out_path.open("a") as f:
+                f.write(json.dumps(asdict(o)) + "\n")
+
+    for start in range(0, len(prompts), chunk):
+        if not budget.can_spend():
+            print(f"cap ${cap:.2f} reached at prompt {start}; stopping", flush=True)
+            return budget
+        block = prompts.iloc[start:start + chunk]
+        todo = [(arm, row) for arm in arms for _, row in block.iterrows() if (row["prompt_id"], arm.name) not in done]
+        with ThreadPoolExecutor(max_workers=max(1, sum(limit.values()))) as pool:
+            list(pool.map(lambda t: work(*t), todo))
         print(f"prompts {start}-{start + len(block) - 1} done, total ${budget.total:.3f}", flush=True)
     return budget
 
@@ -396,7 +404,7 @@ def main() -> None:
         raise SystemExit("no arms selected: check --arms / --skip-provider")
     prompts = select_gsm8k(a.prompts, a.seed) if a.task == "gsm8k" else select_prompts(a.prompts, a.seed)
     print(f"{a.task}: {len(prompts)} prompts x {len(arms)} arms, cap ${a.cap:.2f}", flush=True)
-    collect(prompts, arms, a.cap, out_path=OUT_PATHS[a.task])
+    collect(prompts, arms, a.cap, out_path=OUT_PATHS[a.task], workers_per_provider=WORKERS)
 
 
 if __name__ == "__main__":
