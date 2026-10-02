@@ -4,17 +4,19 @@ Purpose:  Collect per-prompt outcomes for LLMs at several reasoning depths, so t
 Owner:    C1 Controller (V M Wickramaarachchi)
 Contract: v1
 Inputs:   data/processed/prompts.parquet (prompts, split), data/raw/routerbench_0shot.pkl (to recover
-          gold answers), API keys from .env (never logged).
-Outputs:  data/raw/depth/outcomes.jsonl, one line per (prompt_id, arm) call: correctness, tokens,
-          latency, list-price cost.
-Notes:    Gold answer = the letter given by RouterBench models that were scored correct (they never
-          disagree on the multiple-choice sources used here). Cost is tokens x the provider's published
+          gold answers), data/processed/gsm8k_prompts.parquet (data.gsm8k), API keys from .env (never logged).
+Outputs:  data/raw/depth/outcomes.jsonl (multiple choice) and outcomes_gsm8k.jsonl (maths), one line per
+          (prompt_id, arm) call: correctness, tokens, latency, list-price cost.
+Notes:    Multiple choice: gold = the letter given by RouterBench models that were scored correct (they
+          never disagree on the sources used here). GSM8K: gold = the original dataset's final number,
+          scored by numeric equality with the model's final number. Cost is tokens x the provider's published
           list price recorded in ARMS (with the date), so free-tier calls are still priced for the
           thesis' cost axis; the spending cap is enforced on that list-price total. Resumable: calls
           already in outcomes.jsonl are skipped.
 
     python -m data.depth_collect --prompts 20 --cap 2      # pilot
     python -m data.depth_collect --prompts 500 --cap 20    # full run (stops at the cap with whole prompts)
+    python -m data.depth_collect --task gsm8k --prompts 300 --cap 8
 """
 
 from __future__ import annotations
@@ -37,8 +39,11 @@ from data.routerbench import DATA_DIR, RAW_DIR
 
 MC_SOURCES = ("mmlu", "hellaswag", "arc-challenge", "winogrande")
 OUT_PATH = RAW_DIR / "depth" / "outcomes.jsonl"
+OUT_PATHS = {"mc": OUT_PATH, "gsm8k": RAW_DIR / "depth" / "outcomes_gsm8k.jsonl"}
 PRICE_DATE = "2026-10-19"
 MAX_OUTPUT_TOKENS = 8192
+# Groq counts the output limit toward its 8,000 tokens-per-minute cap and rejects larger requests (HTTP 413)
+MAX_OUTPUT_TOKENS_BY_PROVIDER = {"groq": 6000}
 
 
 @dataclass(frozen=True)
@@ -117,6 +122,7 @@ class Outcome:
     price_date: str
     error: str | None = None
     ts: float = 0.0
+    response: str | None = None  # raw visible reply, so answers can be re-scored without new calls
 
 
 # ---------- pure helpers (tested) ----------
@@ -132,6 +138,38 @@ def parse_answer(text: str | None, choices: str = "ABCD") -> str | None:
     letters = explicit or _LETTER.findall(text)
     letters = [x for x in letters if x in choices]
     return letters[-1] if letters else None
+
+
+_NUMBER = r"-?\d[\d,]*(?:\.\d+)?"
+
+
+def parse_number(text: str | None) -> str | None:
+    """Final numeric answer: an explicit 'Answer: N', '#### N' or '\\boxed{N}' wins, else the last number."""
+    if not text:
+        return None
+    text = re.sub(r"\b(\d{1,2}):00\b", r"\1", text)  # a clock time "2:00" answers "2"
+    explicit = re.findall(rf"(?:[Aa]nswer\s*(?:is)?\s*[:\-]?\s*\**\s*\$?|####\s*\$?|\\boxed\{{\s*\$?)({_NUMBER})", text)
+    nums = explicit or re.findall(_NUMBER, text)
+    if not nums:
+        return None
+    n = nums[-1].replace(",", "")
+    return n[:-2] if n.endswith(".0") else n
+
+
+def same_number(a: str | None, b: str) -> bool:
+    try:
+        return a is not None and abs(float(a) - float(b)) < 1e-6
+    except ValueError:
+        return False
+
+
+def score(text: str | None, source: str, gold: str) -> tuple[str | None, bool]:
+    """(parsed answer, correct) for one response."""
+    if source == "gsm8k":
+        answer = parse_number(text)
+        return answer, same_number(answer, gold)
+    answer = parse_answer(text, choices_for(source))
+    return answer, answer == gold
 
 
 def recover_gold(responses: Sequence[str | None], correct: Sequence[bool]) -> str | None:
@@ -203,6 +241,15 @@ def select_prompts(n: int, seed: int = 0, data_dir: Path = DATA_DIR, raw_dir: Pa
     return pd.concat(parts).sample(frac=1, random_state=seed).head(n)[["prompt_id", "split", "source", "text", "gold"]]
 
 
+def select_gsm8k(n: int, seed: int = 0, data_dir: Path = DATA_DIR) -> pd.DataFrame:
+    """n GSM8K prompts, stratified by split (built by data.gsm8k)."""
+    prompts = pd.read_parquet(Path(data_dir) / "gsm8k_prompts.parquet")
+    shares = prompts["split"].value_counts(normalize=True)
+    parts = [prompts[prompts["split"] == s].sample(max(1, round(n * share)), random_state=seed)
+             for s, share in shares.items()]
+    return pd.concat(parts).sample(frac=1, random_state=seed).head(n)[["prompt_id", "split", "source", "text", "gold"]]
+
+
 # ---------- provider calls (thin) ----------
 
 def load_env(path: Path = Path(".env")) -> dict[str, str]:
@@ -223,7 +270,7 @@ def _post(url: str, body: dict, headers: dict, timeout: float = 300) -> dict:
 
 def _openai_style(url: str, key_headers: dict, arm: Arm, text: str) -> tuple[str | None, int, int, int]:
     body = {"model": arm.model, "messages": [{"role": "user", "content": text}],
-            "max_tokens": MAX_OUTPUT_TOKENS} | arm.params
+            "max_tokens": MAX_OUTPUT_TOKENS_BY_PROVIDER.get(arm.provider, MAX_OUTPUT_TOKENS)} | arm.params
     r = _post(url, body, key_headers)
     msg = r["choices"][0]["message"]
     u = r.get("usage", {})
@@ -297,12 +344,12 @@ def run_one(arm: Arm, row: pd.Series, env: dict, call: Callable = call_arm, retr
                 break  # client error (bad request, auth, usage limit): retrying will not help
             time.sleep(min(60, 5 * 2 ** attempt))
     latency = (time.perf_counter() - t0) * 1000
-    answer = parse_answer(answer_text, choices_for(row["source"]))
+    answer, correct = score(answer_text, row["source"], row["gold"])
     return Outcome(prompt_id=row["prompt_id"], arm=arm.name, provider=arm.provider, model=arm.model, depth=arm.depth,
                    split=row["split"], source=row["source"], gold=row["gold"], answer=answer,
-                   correct=answer == row["gold"], input_tokens=tin, output_tokens=tout, reasoning_tokens=treason,
+                   correct=correct, input_tokens=tin, output_tokens=tout, reasoning_tokens=treason,
                    latency_ms=latency, cost_usd=call_cost(arm, tin, tout, treason) if err is None else 0.0,
-                   price_date=PRICE_DATE, error=err, ts=time.time())
+                   price_date=PRICE_DATE, error=err, ts=time.time(), response=answer_text)
 
 
 def collect(prompts: pd.DataFrame, arms: Sequence[Arm], cap: float, out_path: Path = OUT_PATH,
@@ -337,6 +384,7 @@ def collect(prompts: pd.DataFrame, arms: Sequence[Arm], cap: float, out_path: Pa
 
 def main() -> None:
     ap = argparse.ArgumentParser()
+    ap.add_argument("--task", choices=sorted(OUT_PATHS), default="mc", help="mc (4 RouterBench tasks) or gsm8k")
     ap.add_argument("--prompts", type=int, default=20)
     ap.add_argument("--cap", type=float, default=2.0, help="USD at list price, all providers together")
     ap.add_argument("--seed", type=int, default=0)
@@ -346,9 +394,9 @@ def main() -> None:
     arms = [x for x in ARMS if (not a.arms or x.name in a.arms) and x.provider not in a.skip_provider]
     if not arms:
         raise SystemExit("no arms selected: check --arms / --skip-provider")
-    prompts = select_prompts(a.prompts, a.seed)
-    print(f"{len(prompts)} prompts x {len(arms)} arms, cap ${a.cap:.2f}", flush=True)
-    collect(prompts, arms, a.cap)
+    prompts = select_gsm8k(a.prompts, a.seed) if a.task == "gsm8k" else select_prompts(a.prompts, a.seed)
+    print(f"{a.task}: {len(prompts)} prompts x {len(arms)} arms, cap ${a.cap:.2f}", flush=True)
+    collect(prompts, arms, a.cap, out_path=OUT_PATHS[a.task])
 
 
 if __name__ == "__main__":

@@ -12,7 +12,9 @@ from data.depth_collect import (
     collect,
     done_keys,
     parse_answer,
+    parse_number,
     recover_gold,
+    score,
     spent,
 )
 
@@ -117,3 +119,25 @@ def test_sdk_client_errors_are_not_retried(tmp_path, monkeypatch):
 
     collect(prompts_frame(1), [ARM], cap=1.0, out_path=tmp_path / "o.jsonl", env={}, call=limited)
     assert len(calls) == 1 and sleeps == []
+
+
+@pytest.mark.parametrize("text,want", [
+    ("48 + 24 = 72 clips. Answer: 72", "72"),
+    ("The total is $1,250.", "1250"),
+    ("so 3 + 4 = 7\n#### 7", "7"),
+    ("\\boxed{18}", "18"),
+    ("The answer is 5.0", "5"),
+    ("first 10, then 12, Answer: -3", "-3"),
+    ("The baker must arrive by 2:00 am. Answer: 2:00", "2"),
+    ("no number", None),
+    (None, None),
+])
+def test_parse_number(text, want):
+    assert parse_number(text) == want
+
+
+def test_score_dispatches_by_task():
+    assert score("Answer: 72", "gsm8k", "72") == ("72", True)
+    assert score("Answer: 72.00", "gsm8k", "72")[1]
+    assert score("Answer: B", "mmlu", "B") == ("B", True)
+    assert score("Answer: B", "winogrande", "A") == ("B", False)
