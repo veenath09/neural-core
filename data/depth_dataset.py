@@ -36,6 +36,7 @@ from data.depth_collect import (
     MC_SOURCES,
     OUT_PATHS,
     PRICE_DATE,
+    score,
 )
 from data.routerbench import DATA_DIR
 
@@ -45,6 +46,12 @@ DEPTH_DIR = Path(DATA_DIR) / "depth"
 def latest_successful(paths=tuple(OUT_PATHS.values())) -> tuple[pd.DataFrame, pd.DataFrame]:
     lines = [line for p in map(Path, paths) if p.exists() for line in p.read_text().splitlines()]
     rows = pd.DataFrame([json.loads(line) for line in lines])
+    if "response" in rows:  # re-score saved replies with the current parser; older rows keep their score
+        has = rows["response"].notna() & rows["error"].isna()
+        scored = [score(r, src, g) for r, src, g in zip(rows.loc[has, "response"], rows.loc[has, "source"],
+                                                        rows.loc[has, "gold"])]
+        rows.loc[has, "answer"] = [a for a, _ in scored]
+        rows.loc[has, "correct"] = [c for _, c in scored]
     ok = rows[rows["error"].isna()].sort_values("ts").drop_duplicates(["prompt_id", "arm"], keep="last")
     return rows, ok.reset_index(drop=True)
 

@@ -150,6 +150,7 @@ def parse_number(text: str | None) -> str | None:
     if not text:
         return None
     text = re.sub(r"\b(\d{1,2}):00\b", r"\1", text)  # a clock time "2:00" answers "2"
+    text = text.replace("{,}", ",").replace("\\,", ",")  # LaTeX thousands separators: 2{,}870, 2\,870
     explicit = re.findall(rf"(?:[Aa]nswer\s*(?:is)?\s*[:\-]?\s*\**\s*\$?|####\s*\$?|\\boxed\{{\s*\$?)({_NUMBER})", text)
     nums = explicit or re.findall(_NUMBER, text)
     if not nums:

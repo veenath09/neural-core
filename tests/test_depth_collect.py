@@ -129,6 +129,8 @@ def test_sdk_client_errors_are_not_retried(tmp_path, monkeypatch):
     ("The answer is 5.0", "5"),
     ("first 10, then 12, Answer: -3", "-3"),
     ("The baker must arrive by 2:00 am. Answer: 2:00", "2"),
+    ("total \\boxed{2{,}870}", "2870"),
+    ("so 2\\,870 fish", "2870"),
     ("no number", None),
     (None, None),
 ])
