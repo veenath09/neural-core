@@ -84,12 +84,14 @@ def make_episodes(skeletons: Sequence[Skeleton], world: World) -> list[Episode]:
     return [Episode(sk, world.table, world.model_ids) for sk in skeletons]
 
 
-def evaluate(model, skeletons: Sequence[Skeleton], world: World, tau: float = 0.5, batch_size: int = 512) -> dict:
+def evaluate(model, skeletons: Sequence[Skeleton], world: World, tau: float = 0.5, batch_size: int = 512,
+             halt_tau: float = 0.5) -> dict:
     model.eval()
     results, firsts, n_halt, n_escalate = [], [], 0, 0
     with torch.no_grad():
         for start in range(0, len(skeletons), batch_size):
-            out = rollout(model, make_episodes(skeletons[start:start + batch_size], world), world, tau=tau)
+            out = rollout(model, make_episodes(skeletons[start:start + batch_size], world), world, tau=tau,
+                          halt_tau=halt_tau)
             results += out.results
             for actions in out.decision_actions:
                 firsts += [a["model"] for a in actions if a["phase"] == "choose" and a["model"] is not None]

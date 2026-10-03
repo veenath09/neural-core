@@ -60,6 +60,7 @@ def rollout(
     *,
     policy: str = "greedy",
     tau: float = 0.5,
+    halt_tau: float = 0.5,  # escalate after round 1 when p(escalate) exceeds this
     model_share: bool = True,
     rng: np.random.Generator | None = None,
     bp_steps: int = 5,
@@ -303,7 +304,7 @@ def rollout(
                         rng.choice(options)
                     )
 
-            elif options and p_halt[j] > 0.5:
+            elif options and p_halt[j] > halt_tau:
                 m2 = tau_choice(
                     p_model[j],
                     options,
