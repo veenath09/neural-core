@@ -24,6 +24,7 @@ from eval.policies import EpisodeResult
 SOURCES = ("oracle", "random", "model")
 SHARES = (0.5, 0.25, 0.25)  # behaviour mixture per step (D1, D11)
 RANDOM_ESCALATE_P = 0.3
+LOSS_WEIGHTS = {"model": 1.0, "halt": 0.5, "complexity": 0.2}  # model / halt / complexity (spec, Section 4)
 
 
 @dataclass
@@ -346,11 +347,7 @@ def rollout(
             for k, v in terms.items()
         }
 
-        loss = (
-            means["model"]
-            + means["halt"]
-            + means["complexity"]
-        )
+        loss = sum(LOSS_WEIGHTS[k] * means[k] for k in LOSS_WEIGHTS)
 
         parts = {
             k: v.item()

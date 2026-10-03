@@ -39,18 +39,19 @@ class OutcomeTable:
     step_type: np.ndarray
     correct: np.ndarray  # bool [n_prompts, n_models]
     cost: np.ndarray  # float [n_prompts, n_models]
+    # difficulty band 0..4 used to group correlated episodes; defaults to the number of pool models that
+    # fail, which is 0..4 for the 4-model pool. Larger pools store a 0..4 bucket instead (data.depth_pool).
+    band: np.ndarray | None = None
     index: dict[str, int] = field(init=False, repr=False)
 
     def __post_init__(self):
         self.index = {p: i for i, p in enumerate(self.prompt_ids)}
+        if self.band is None:
+            self.band = (~self.correct).sum(axis=1)
 
     @property
     def n_models(self) -> int:
         return self.correct.shape[1]
-
-    @property
-    def band(self) -> np.ndarray:
-        return (~self.correct).sum(axis=1)
 
     @classmethod
     def from_frame(cls, df: pd.DataFrame) -> OutcomeTable:
@@ -60,6 +61,7 @@ class OutcomeTable:
             step_type=df["step_type"].to_numpy(),
             correct=df[[f"correct_{i}" for i in range(n)]].to_numpy(bool),
             cost=df[[f"cost_{i}" for i in range(n)]].to_numpy(float),
+            band=df["band"].to_numpy(int) if "band" in df else None,
         )
 
 

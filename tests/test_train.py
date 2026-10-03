@@ -10,7 +10,7 @@ from data.episodes import generate_skeletons
 from tests.conftest import make_table
 from tests.test_env import IDS
 from train.rollout import World
-from train.train import Data, ema_decay, load_model, make_ema, train
+from train.train import Data, alarms, ema_decay, load_model, make_ema, train
 
 
 def tiny_data():
@@ -31,6 +31,23 @@ def test_training_writes_checkpoint_and_metrics(tmp_path):
     assert all(np.isfinite(h["val_loss"]) and 0 <= h["val_quality"] <= 1 for h in summary["history"])
     model = load_model(run, data)
     assert model.cfg.gate == "cfc"
+
+
+def test_training_logs_monitoring_metrics(tmp_path):
+    rows = []
+    summary = train("full", seed=0, epochs=1, batch_size=32, data=tiny_data(), out_dir=tmp_path, log=rows.append)
+    ref, row = rows[0]["reference"], summary["history"][0]
+    assert 0 <= ref["always_cheapest_quality"] <= ref["oracle_quality"] <= 1
+    assert {"train_model", "train_halt", "train_complexity", "val_gap_closed", "grad_norm", "lr"} <= row.keys()
+    assert len(row["val_choice_share"]) == 4 and abs(sum(row["val_choice_share"]) - 1) < 1e-3
+    assert 0 <= row["val_choice_entropy"] <= 1 and 0 <= row["val_escalation_rate"] <= 1
+    assert isinstance(row["alarms"], list)
+
+
+def test_alarms_flag_collapse():
+    row = {"val_choice_share": [0.9, 0.1, 0, 0], "train_loss": 0.5, "val_loss": 0.5, "grad_norm": 1.0}
+    assert any("collapse" in a for a in alarms(row, IDS))
+    assert alarms(row | {"val_choice_share": [0.25] * 4}, IDS) == []
 
 
 def test_training_reduces_loss(tmp_path):
