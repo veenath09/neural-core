@@ -8,10 +8,13 @@ Outputs:  runs/<run>/tau_sweep.csv  one row per (tau, halt_tau): val quality, co
           runs/<run>/tau.json       the chosen thresholds and the rule that chose them
 Notes:    tau: pick the cheapest model whose predicted success is >= tau (else the most likely one).
           halt_tau: escalate after round 1 when the halt head's probability exceeds it.
-          Rule, fixed before test: highest val quality; among settings within QUALITY_TOL of it, the cheapest.
+          Rule, fixed before test (decided 2026-10-21): the highest val quality among settings whose val cost
+          is no higher than the random-option baseline's on the same episodes; ties within QUALITY_TOL go to
+          the cheaper setting. If no setting is that cheap, the cheapest setting. Report the whole curve too.
           Gap closed = (quality - always-cheapest) / (oracle - always-cheapest) on the same episodes.
 
     python -m eval.tau_sweep runs/depth/full-s0
+    python -m eval.tau_sweep --reselect runs/*/*-s0     # re-apply the rule to saved curves, no new rollouts
 """
 
 from __future__ import annotations
@@ -22,7 +25,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from eval.policies import AlwaysCheapest
+from eval.policies import AlwaysCheapest, RandomPolicy
 from eval.policies import evaluate as evaluate_policies
 from train.train import evaluate, load_data, load_model, reference_points
 
@@ -31,9 +34,30 @@ HALT_TAUS = (0.1, 0.2, 0.3, 0.5, 0.7)
 QUALITY_TOL = 0.002
 
 
-def choose(curve: pd.DataFrame, tol: float = QUALITY_TOL) -> pd.Series:
-    near = curve[curve["quality"] >= curve["quality"].max() - tol]
+RULE = "max val quality with val cost <= random-option baseline; ties within {tol} -> cheapest"
+
+
+def choose(curve: pd.DataFrame, cost_cap: float = float("inf"), tol: float = QUALITY_TOL) -> pd.Series:
+    affordable = curve[curve["cost_usd"] <= cost_cap]
+    if affordable.empty:
+        return curve.sort_values(["cost_usd", "tau", "halt_tau"]).iloc[0]
+    near = affordable[affordable["quality"] >= affordable["quality"].max() - tol]
     return near.sort_values(["cost_usd", "tau", "halt_tau"]).iloc[0]
+
+
+def baselines(data) -> dict:
+    df = evaluate_policies(data.val, data.world.table, data.world.model_ids, [AlwaysCheapest(), RandomPolicy(0)])
+    g = df.groupby("policy")[["quality", "cost_usd"]].mean()
+    return {"always_cheapest_quality": float(g.loc["always_cheapest", "quality"]),
+            "random_quality": float(g.loc["random", "quality"]), "random_cost_usd": float(g.loc["random", "cost_usd"])}
+
+
+def write_choice(run_dir: Path, curve: pd.DataFrame, ref: dict, base: dict) -> dict:
+    best = choose(curve, base["random_cost_usd"])
+    out = {"tau": float(best["tau"]), "halt_tau": float(best["halt_tau"]), "val_quality": float(best["quality"]),
+           "val_cost_usd": float(best["cost_usd"]), "rule": RULE.format(tol=QUALITY_TOL), "oracle": ref} | base
+    (run_dir / "tau.json").write_text(json.dumps(out, indent=2))
+    return out
 
 
 def sweep(run_dir: Path, taus=TAUS, halt_taus=HALT_TAUS) -> pd.DataFrame:
@@ -41,7 +65,8 @@ def sweep(run_dir: Path, taus=TAUS, halt_taus=HALT_TAUS) -> pd.DataFrame:
     data = load_data(Path(summary["data_dir"]))
     model = load_model(run_dir, data)
     ref = reference_points(data.val, data.world, data.data_dir)
-    floor = float(evaluate_policies(data.val, data.world.table, data.world.model_ids, [AlwaysCheapest()])["quality"].mean())
+    base = baselines(data)
+    floor = base["always_cheapest_quality"]
     rows = []
     for tau in taus:
         for halt_tau in halt_taus:
@@ -53,17 +78,22 @@ def sweep(run_dir: Path, taus=TAUS, halt_taus=HALT_TAUS) -> pd.DataFrame:
             print(json.dumps(rows[-1]), flush=True)
     curve = pd.DataFrame(rows)
     curve.to_csv(run_dir / "tau_sweep.csv", index=False)
-    best = choose(curve)
-    (run_dir / "tau.json").write_text(json.dumps({
-        "tau": float(best["tau"]), "halt_tau": float(best["halt_tau"]), "val_quality": float(best["quality"]),
-        "val_cost_usd": float(best["cost_usd"]), "rule": f"max val quality, ties within {QUALITY_TOL} -> cheapest",
-        "oracle": ref, "always_cheapest_quality": floor}, indent=2))
+    write_choice(run_dir, curve, ref, base)
     return curve
+
+
+def reselect(run_dir: Path) -> dict:
+    """Apply the current rule to a saved curve (the curve itself does not depend on the rule)."""
+    data = load_data(Path(json.loads((run_dir / "metrics.json").read_text())["data_dir"]))
+    return write_choice(run_dir, pd.read_csv(run_dir / "tau_sweep.csv"),
+                        reference_points(data.val, data.world, data.data_dir), baselines(data))
 
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("run_dirs", nargs="+", type=Path)
-    for d in ap.parse_args().run_dirs:
-        sweep(d)
+    ap.add_argument("--reselect", action="store_true", help="re-apply the rule to saved tau_sweep.csv files")
+    a = ap.parse_args()
+    for d in a.run_dirs:
+        reselect(d) if a.reselect else sweep(d)
         print(d, (d / "tau.json").read_text())
