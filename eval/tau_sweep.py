@@ -27,7 +27,7 @@ from eval.policies import evaluate as evaluate_policies
 from train.train import evaluate, load_data, load_model, reference_points
 
 TAUS = (0.5, 0.6, 0.7, 0.8, 0.85, 0.9, 0.95, 0.98, 0.99)
-HALT_TAUS = (0.3, 0.5, 0.7)
+HALT_TAUS = (0.1, 0.2, 0.3, 0.5, 0.7)
 QUALITY_TOL = 0.002
 
 
