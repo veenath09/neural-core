@@ -55,3 +55,23 @@ Surprises:
 Changes made: loss weights 1/1/1 -> 1.0/0.5/0.2 (spec); thresholds tuned on val; selection rule switched to the cost-capped rule (decision log 2026-10-21).
 Scope: this is the Phase 1 prototype (supervised, three heads, one escalation per step). The RL stage, the other heads (tools, memory, depth, verification, topology), calibration and the real verifier are not in these runs.
 Next: sanity checks for the null context result (masking invariance, full actually reads its context, retry/propagation change oracle labels); then the analysis freeze and seeds 1-2. Test set not used yet.
+
+## 2026-10-21 sanity checks for the null context result (val only)
+Runs: runs/routerbench/full-s0, runs/depth_aug/full-s0 (no new training)
+Commit: d416274
+1. Masking: tests/test_model.py passes (context_free ignores task, budget and earlier steps; full reads them).
+2. Does the trained full model use its context? Removing inputs at inference (RouterBench, tau 0.5, escalate above 0.2;
+   paired over 2,000 val episodes): task -0.013 +- 0.008, budget -0.014 +- 0.009 (cost +72%), earlier steps -0.011 +- 0.006,
+   memory -0.029 +- 0.010 (cost +47%), all context -0.024 +- 0.010 (cost +81%). depth_aug: memory -0.012 +- 0.004,
+   budget -0.008 +- 0.004 (cost x4.6), all context -0.022 +- 0.005 (cost x6.6). full relies on its context; no masking bug.
+3. Can history help at all in this simulator? Per-step oracle that sees history vs one that ignores it (val, RouterBench):
+   correlated 0.933 vs 0.933, retry 0.891 vs 0.891, propagation 0.903 vs 0.881, random 0.909 vs 0.909. History changes
+   which models succeed on 0.4% of steps; retry steps are 3.5% of steps.
+Observed: the most any controller could gain from history is about +0.5 points overall (+2.3 on propagation episodes,
+which are 20% of episodes), below the +-0.75 point 95% CI of a single-seed paired comparison.
+Conclusion: the null full-vs-context_free result is a property of the simulator's dependency rules, not of the controller:
+full uses its context, but context_free can reach the same quality from the current question alone. This is the
+"synthetic dependencies" threat in the research plan.
+Changes made: none.
+Next: propose stronger dependencies to C3 (a retried question needs a different model than the one that failed; a failure
+affects every later step; budget carried across steps matters), as a contract change agreed by the team, before seeds 1-2.
