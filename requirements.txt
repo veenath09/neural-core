@@ -7,4 +7,4 @@ torch>=2.4
 pytest>=8
 matplotlib>=3.8
 langgraph>=1.2,<2
-crewai==1.15.22
+crewai==1.15.22mlflow>=3.0  # optional: training monitoring (train/tracking.py); every call is a no-op without it

@@ -31,7 +31,7 @@ from data.episodes import Skeleton, load_skeletons
 from data.routerbench import DATA_DIR, OutcomeTable, load_prepared
 from eval.policies import AlwaysCheapest, EpisodeOracle
 from eval.policies import evaluate as evaluate_policies
-from train.rollout import World, rollout
+from train.rollout import LOSS_WEIGHTS, World, rollout
 
 EMA_DECAY = 0.999
 COLLAPSE_SHARE = 0.85  # alarm if one option takes this share of first-round choices
@@ -148,7 +148,7 @@ def validation_loss(model, skeletons: Sequence[Skeleton], world: World, batch_si
 def train(config: str, seed: int = 0, epochs: int = 20, batch_size: int = 256, lr: float = 3e-4,
           weight_decay: float = 0.01, patience: int = 3, bp_min: int = 2, max_train: int | None = None,
           max_val: int | None = None, out_dir: Path = Path("runs"), data: Data | None = None,
-          log: Callable[[dict], None] = print) -> dict:
+          log: Callable[[dict], None] = print, tracker=None) -> dict:
     data = data or load_data()
     torch.manual_seed(seed)
     rng = np.random.default_rng(seed)
@@ -165,8 +165,11 @@ def train(config: str, seed: int = 0, epochs: int = 20, batch_size: int = 256, l
     ref = reference_points(val_sk, data.world, data.data_dir)
     floor = evaluate_policies(val_sk, data.world.table, data.world.model_ids, [AlwaysCheapest()])
     ref_floor = float(floor["quality"].mean())  # always-cheapest: 0% of the gap, oracle: 100%
-    log({"reference": ref | {"always_cheapest_quality": ref_floor,
-                             "always_cheapest_cost": float(floor["cost_usd"].mean())}})
+    reference = {"reference": ref | {"always_cheapest_quality": ref_floor,
+                                     "always_cheapest_cost": float(floor["cost_usd"].mean())}}
+    log(reference)
+    if tracker:
+        tracker.log(reference, step=0)
     for epoch in range(epochs):
         model.train()
         order = rng.permutation(len(train_sk))
@@ -197,6 +200,8 @@ def train(config: str, seed: int = 0, epochs: int = 20, batch_size: int = 256, l
         row["alarms"] = alarms(row, data.world.model_ids)
         history.append(row)
         log(row)
+        if tracker:
+            tracker.log(row, step=epoch)
         if val_loss < best - 1e-4:
             best, stale = val_loss, 0
             torch.save(ema.module.state_dict(), run_dir / "model.pt")
@@ -207,7 +212,12 @@ def train(config: str, seed: int = 0, epochs: int = 20, batch_size: int = 256, l
     summary = {"config": config, "seed": seed, "params": n_parameters(model), "best_val_loss": best,
                "data_dir": str(data.data_dir or DATA_DIR), "reference": ref,
                "model_config": asdict(CONFIGS[config]), "history": history}
+    if tracker and tracker.run_id:
+        summary["mlflow_run_id"] = tracker.run_id  # eval.tau_sweep --track logs into the same run
+        tracker.log({"best_val_loss": best, "epochs_run": len(history), "params": summary["params"]})
     (run_dir / "metrics.json").write_text(json.dumps(summary, indent=2))
+    if tracker:
+        tracker.artifact(run_dir / "metrics.json")
     return summary
 
 
@@ -230,9 +240,30 @@ def main() -> None:
     parser.add_argument("--bp-min", type=int, default=2)
     parser.add_argument("--data-dir", type=Path, default=Path(DATA_DIR), help="pool: RouterBench (default) or depth_pool")
     parser.add_argument("--out-dir", type=Path, default=Path("runs"))
+    parser.add_argument("--track", action="store_true", help="log params, per-epoch metrics and alarms to MLflow")
     a = parser.parse_args()
-    train(a.config, a.seed, a.epochs, a.batch_size, bp_min=a.bp_min, max_train=a.max_train, max_val=a.max_val,
-          out_dir=a.out_dir, data=load_data(a.data_dir), log=lambda row: print(json.dumps(row), flush=True))
+    tracker = None
+    if a.track:
+        from train.tracking import Tracker
+
+        pool = Path(a.data_dir).name or "routerbench"
+        tracker = Tracker(f"{a.out_dir.name}/{a.config}-s{a.seed}",
+                          params={"config": a.config, "seed": a.seed, "epochs": a.epochs, "batch_size": a.batch_size,
+                                  "bp_min": a.bp_min, "data_dir": str(a.data_dir), "out_dir": str(a.out_dir),
+                                  "max_train": a.max_train, "max_val": a.max_val, "loss_weights": LOSS_WEIGHTS,
+                                  "model": asdict(CONFIGS[a.config])},
+                          tags={"stage": "supervised", "pool": "routerbench" if pool == "processed" else pool,
+                                "config": a.config, "seed": a.seed})
+    try:
+        train(a.config, a.seed, a.epochs, a.batch_size, bp_min=a.bp_min, max_train=a.max_train, max_val=a.max_val,
+              out_dir=a.out_dir, data=load_data(a.data_dir), log=lambda row: print(json.dumps(row), flush=True),
+              tracker=tracker)
+    except BaseException:
+        if tracker:
+            tracker.end("FAILED")
+        raise
+    if tracker:
+        tracker.end()
 
 
 if __name__ == "__main__":

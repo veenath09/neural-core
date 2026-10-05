@@ -1,0 +1,1436 @@
+{
+  "uid": "neural-core-training",
+  "title": "neural-core: training monitor",
+  "tags": [
+    "neural-core",
+    "mlflow"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "editable": true,
+  "time": {
+    "from": "now-30d",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "pool",
+        "label": "pool",
+        "type": "query",
+        "datasource": {
+          "type": "frser-sqlite-datasource",
+          "uid": "mlflow"
+        },
+        "query": "SELECT DISTINCT value FROM tags WHERE key = 'pool' ORDER BY value",
+        "definition": "SELECT DISTINCT value FROM tags WHERE key = 'pool' ORDER BY value",
+        "refresh": 2,
+        "multi": true,
+        "includeAll": true,
+        "current": {},
+        "sort": 1,
+        "options": []
+      },
+      {
+        "name": "run",
+        "label": "supervised runs",
+        "type": "query",
+        "datasource": {
+          "type": "frser-sqlite-datasource",
+          "uid": "mlflow"
+        },
+        "query": "SELECT r.name FROM runs r JOIN tags s ON s.run_uuid = r.run_uuid AND s.key = 'stage' JOIN tags p ON p.run_uuid = r.run_uuid AND p.key = 'pool' WHERE s.value = 'supervised' AND p.value IN (${pool:sqlstring}) AND r.lifecycle_stage = 'active' ORDER BY r.name",
+        "definition": "SELECT r.name FROM runs r JOIN tags s ON s.run_uuid = r.run_uuid AND s.key = 'stage' JOIN tags p ON p.run_uuid = r.run_uuid AND p.key = 'pool' WHERE s.value = 'supervised' AND p.value IN (${pool:sqlstring}) AND r.lifecycle_stage = 'active' ORDER BY r.name",
+        "refresh": 2,
+        "multi": true,
+        "includeAll": true,
+        "current": {},
+        "sort": 1,
+        "options": []
+      },
+      {
+        "name": "rl_run",
+        "label": "RL runs",
+        "type": "query",
+        "datasource": {
+          "type": "frser-sqlite-datasource",
+          "uid": "mlflow"
+        },
+        "query": "SELECT r.name FROM runs r JOIN tags s ON s.run_uuid = r.run_uuid AND s.key = 'stage' JOIN tags p ON p.run_uuid = r.run_uuid AND p.key = 'pool' WHERE s.value = 'rl_sim' AND p.value IN (${pool:sqlstring}) AND r.lifecycle_stage = 'active' ORDER BY r.name",
+        "definition": "SELECT r.name FROM runs r JOIN tags s ON s.run_uuid = r.run_uuid AND s.key = 'stage' JOIN tags p ON p.run_uuid = r.run_uuid AND p.key = 'pool' WHERE s.value = 'rl_sim' AND p.value IN (${pool:sqlstring}) AND r.lifecycle_stage = 'active' ORDER BY r.name",
+        "refresh": 2,
+        "multi": true,
+        "includeAll": true,
+        "current": {},
+        "sort": 1,
+        "options": []
+      },
+      {
+        "name": "lam",
+        "label": "lambda index",
+        "type": "custom",
+        "multi": false,
+        "includeAll": false,
+        "query": "0,1,2,3,4",
+        "current": {
+          "text": "3",
+          "value": "3"
+        },
+        "options": [
+          {
+            "text": "0",
+            "value": "0",
+            "selected": false
+          },
+          {
+            "text": "1",
+            "value": "1",
+            "selected": false
+          },
+          {
+            "text": "2",
+            "value": "2",
+            "selected": false
+          },
+          {
+            "text": "3",
+            "value": "3",
+            "selected": true
+          },
+          {
+            "text": "4",
+            "value": "4",
+            "selected": false
+          }
+        ]
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "row",
+      "title": "Supervised training (per epoch)",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "type": "trend",
+      "title": "Val quality",
+      "description": "share of steps answered correctly, val episodes",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "mlflow"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 1,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "mlflow"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT m.step AS step, r.name AS run, m.value AS value FROM metrics m JOIN runs r ON r.run_uuid = m.run_uuid WHERE m.key IN ('val_quality') AND r.name IN (${run:sqlstring}) AND r.lifecycle_stage = 'active' ORDER BY run, step",
+          "queryText": "SELECT m.step AS step, r.name AS run, m.value AS value FROM metrics m JOIN runs r ON r.run_uuid = m.run_uuid WHERE m.key IN ('val_quality') AND r.name IN (${run:sqlstring}) AND r.lifecycle_stage = 'active' ORDER BY run, step",
+          "timeColumns": []
+        }
+      ],
+      "transformations": [
+        {
+          "id": "partitionByValues",
+          "options": {
+            "fields": [
+              "run"
+            ],
+            "keepFields": false,
+            "naming": {
+              "asLabels": true
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "",
+          "displayName": "${__field.labels.run}",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "showPoints": "auto",
+            "axisLabel": ""
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "step"
+            },
+            "properties": [
+              {
+                "id": "custom.axisLabel",
+                "value": "epoch"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "xField": "step",
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "type": "trend",
+      "title": "Val cost per episode",
+      "description": "",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "mlflow"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 1,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "mlflow"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT m.step AS step, r.name AS run, m.value AS value FROM metrics m JOIN runs r ON r.run_uuid = m.run_uuid WHERE m.key IN ('val_cost') AND r.name IN (${run:sqlstring}) AND r.lifecycle_stage = 'active' ORDER BY run, step",
+          "queryText": "SELECT m.step AS step, r.name AS run, m.value AS value FROM metrics m JOIN runs r ON r.run_uuid = m.run_uuid WHERE m.key IN ('val_cost') AND r.name IN (${run:sqlstring}) AND r.lifecycle_stage = 'active' ORDER BY run, step",
+          "timeColumns": []
+        }
+      ],
+      "transformations": [
+        {
+          "id": "partitionByValues",
+          "options": {
+            "fields": [
+              "run"
+            ],
+            "keepFields": false,
+            "naming": {
+              "asLabels": true
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "displayName": "${__field.labels.run}",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "showPoints": "auto",
+            "axisLabel": ""
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "step"
+            },
+            "properties": [
+              {
+                "id": "custom.axisLabel",
+                "value": "epoch"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "xField": "step",
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "type": "trend",
+      "title": "Train vs val loss",
+      "description": "",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "mlflow"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 9,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "mlflow"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT m.step AS step, r.name || '  ' || m.key AS run, m.value AS value FROM metrics m JOIN runs r ON r.run_uuid = m.run_uuid WHERE m.key IN ('train_loss', 'val_loss') AND r.name IN (${run:sqlstring}) AND r.lifecycle_stage = 'active' ORDER BY run, step",
+          "queryText": "SELECT m.step AS step, r.name || '  ' || m.key AS run, m.value AS value FROM metrics m JOIN runs r ON r.run_uuid = m.run_uuid WHERE m.key IN ('train_loss', 'val_loss') AND r.name IN (${run:sqlstring}) AND r.lifecycle_stage = 'active' ORDER BY run, step",
+          "timeColumns": []
+        }
+      ],
+      "transformations": [
+        {
+          "id": "partitionByValues",
+          "options": {
+            "fields": [
+              "run"
+            ],
+            "keepFields": false,
+            "naming": {
+              "asLabels": true
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "",
+          "displayName": "${__field.labels.run}",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "showPoints": "auto",
+            "axisLabel": ""
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "step"
+            },
+            "properties": [
+              {
+                "id": "custom.axisLabel",
+                "value": "epoch"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "xField": "step",
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "type": "trend",
+      "title": "Loss per head (train)",
+      "description": "model 1.0 / halt 0.5 / complexity 0.2 in the total",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "mlflow"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 9,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "mlflow"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT m.step AS step, r.name || '  ' || m.key AS run, m.value AS value FROM metrics m JOIN runs r ON r.run_uuid = m.run_uuid WHERE m.key IN ('train_model', 'train_halt', 'train_complexity') AND r.name IN (${run:sqlstring}) AND r.lifecycle_stage = 'active' ORDER BY run, step",
+          "queryText": "SELECT m.step AS step, r.name || '  ' || m.key AS run, m.value AS value FROM metrics m JOIN runs r ON r.run_uuid = m.run_uuid WHERE m.key IN ('train_model', 'train_halt', 'train_complexity') AND r.name IN (${run:sqlstring}) AND r.lifecycle_stage = 'active' ORDER BY run, step",
+          "timeColumns": []
+        }
+      ],
+      "transformations": [
+        {
+          "id": "partitionByValues",
+          "options": {
+            "fields": [
+              "run"
+            ],
+            "keepFields": false,
+            "naming": {
+              "asLabels": true
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "",
+          "displayName": "${__field.labels.run}",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "showPoints": "auto",
+            "axisLabel": ""
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "step"
+            },
+            "properties": [
+              {
+                "id": "custom.axisLabel",
+                "value": "epoch"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "xField": "step",
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "type": "trend",
+      "title": "Oracle gap closed",
+      "description": "(quality - always cheapest) / (oracle - always cheapest)",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "mlflow"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 17,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "mlflow"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT m.step AS step, r.name AS run, m.value AS value FROM metrics m JOIN runs r ON r.run_uuid = m.run_uuid WHERE m.key IN ('val_gap_closed') AND r.name IN (${run:sqlstring}) AND r.lifecycle_stage = 'active' ORDER BY run, step",
+          "queryText": "SELECT m.step AS step, r.name AS run, m.value AS value FROM metrics m JOIN runs r ON r.run_uuid = m.run_uuid WHERE m.key IN ('val_gap_closed') AND r.name IN (${run:sqlstring}) AND r.lifecycle_stage = 'active' ORDER BY run, step",
+          "timeColumns": []
+        }
+      ],
+      "transformations": [
+        {
+          "id": "partitionByValues",
+          "options": {
+            "fields": [
+              "run"
+            ],
+            "keepFields": false,
+            "naming": {
+              "asLabels": true
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "displayName": "${__field.labels.run}",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "showPoints": "auto",
+            "axisLabel": ""
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "step"
+            },
+            "properties": [
+              {
+                "id": "custom.axisLabel",
+                "value": "epoch"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "xField": "step",
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "type": "trend",
+      "title": "Choice entropy",
+      "description": "0 = one option every time (collapse), 1 = uniform",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "mlflow"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 17,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "mlflow"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT m.step AS step, r.name AS run, m.value AS value FROM metrics m JOIN runs r ON r.run_uuid = m.run_uuid WHERE m.key IN ('val_choice_entropy') AND r.name IN (${run:sqlstring}) AND r.lifecycle_stage = 'active' ORDER BY run, step",
+          "queryText": "SELECT m.step AS step, r.name AS run, m.value AS value FROM metrics m JOIN runs r ON r.run_uuid = m.run_uuid WHERE m.key IN ('val_choice_entropy') AND r.name IN (${run:sqlstring}) AND r.lifecycle_stage = 'active' ORDER BY run, step",
+          "timeColumns": []
+        }
+      ],
+      "transformations": [
+        {
+          "id": "partitionByValues",
+          "options": {
+            "fields": [
+              "run"
+            ],
+            "keepFields": false,
+            "naming": {
+              "asLabels": true
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "",
+          "displayName": "${__field.labels.run}",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "showPoints": "auto",
+            "axisLabel": ""
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "step"
+            },
+            "properties": [
+              {
+                "id": "custom.axisLabel",
+                "value": "epoch"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "xField": "step",
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "type": "trend",
+      "title": "Escalation rate",
+      "description": "",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "mlflow"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 17,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "mlflow"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT m.step AS step, r.name AS run, m.value AS value FROM metrics m JOIN runs r ON r.run_uuid = m.run_uuid WHERE m.key IN ('val_escalation_rate') AND r.name IN (${run:sqlstring}) AND r.lifecycle_stage = 'active' ORDER BY run, step",
+          "queryText": "SELECT m.step AS step, r.name AS run, m.value AS value FROM metrics m JOIN runs r ON r.run_uuid = m.run_uuid WHERE m.key IN ('val_escalation_rate') AND r.name IN (${run:sqlstring}) AND r.lifecycle_stage = 'active' ORDER BY run, step",
+          "timeColumns": []
+        }
+      ],
+      "transformations": [
+        {
+          "id": "partitionByValues",
+          "options": {
+            "fields": [
+              "run"
+            ],
+            "keepFields": false,
+            "naming": {
+              "asLabels": true
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "displayName": "${__field.labels.run}",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "showPoints": "auto",
+            "axisLabel": ""
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "step"
+            },
+            "properties": [
+              {
+                "id": "custom.axisLabel",
+                "value": "epoch"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "xField": "step",
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "type": "trend",
+      "title": "Gradient norm",
+      "description": "",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "mlflow"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 25,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "mlflow"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT m.step AS step, r.name AS run, m.value AS value FROM metrics m JOIN runs r ON r.run_uuid = m.run_uuid WHERE m.key IN ('grad_norm') AND r.name IN (${run:sqlstring}) AND r.lifecycle_stage = 'active' ORDER BY run, step",
+          "queryText": "SELECT m.step AS step, r.name AS run, m.value AS value FROM metrics m JOIN runs r ON r.run_uuid = m.run_uuid WHERE m.key IN ('grad_norm') AND r.name IN (${run:sqlstring}) AND r.lifecycle_stage = 'active' ORDER BY run, step",
+          "timeColumns": []
+        }
+      ],
+      "transformations": [
+        {
+          "id": "partitionByValues",
+          "options": {
+            "fields": [
+              "run"
+            ],
+            "keepFields": false,
+            "naming": {
+              "asLabels": true
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "",
+          "displayName": "${__field.labels.run}",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "showPoints": "auto",
+            "axisLabel": ""
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "step"
+            },
+            "properties": [
+              {
+                "id": "custom.axisLabel",
+                "value": "epoch"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "xField": "step",
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "type": "trend",
+      "title": "Learning rate",
+      "description": "",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "mlflow"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 25,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "mlflow"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT m.step AS step, r.name AS run, m.value AS value FROM metrics m JOIN runs r ON r.run_uuid = m.run_uuid WHERE m.key IN ('lr') AND r.name IN (${run:sqlstring}) AND r.lifecycle_stage = 'active' ORDER BY run, step",
+          "queryText": "SELECT m.step AS step, r.name AS run, m.value AS value FROM metrics m JOIN runs r ON r.run_uuid = m.run_uuid WHERE m.key IN ('lr') AND r.name IN (${run:sqlstring}) AND r.lifecycle_stage = 'active' ORDER BY run, step",
+          "timeColumns": []
+        }
+      ],
+      "transformations": [
+        {
+          "id": "partitionByValues",
+          "options": {
+            "fields": [
+              "run"
+            ],
+            "keepFields": false,
+            "naming": {
+              "asLabels": true
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "",
+          "displayName": "${__field.labels.run}",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "showPoints": "auto",
+            "axisLabel": ""
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "step"
+            },
+            "properties": [
+              {
+                "id": "custom.axisLabel",
+                "value": "epoch"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "xField": "step",
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "type": "trend",
+      "title": "Alarms per epoch",
+      "description": "collapse, non-finite values, train/val gap",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "mlflow"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 25,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "mlflow"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT m.step AS step, r.name AS run, m.value AS value FROM metrics m JOIN runs r ON r.run_uuid = m.run_uuid WHERE m.key IN ('alarm_count') AND r.name IN (${run:sqlstring}) AND r.lifecycle_stage = 'active' ORDER BY run, step",
+          "queryText": "SELECT m.step AS step, r.name AS run, m.value AS value FROM metrics m JOIN runs r ON r.run_uuid = m.run_uuid WHERE m.key IN ('alarm_count') AND r.name IN (${run:sqlstring}) AND r.lifecycle_stage = 'active' ORDER BY run, step",
+          "timeColumns": []
+        }
+      ],
+      "transformations": [
+        {
+          "id": "partitionByValues",
+          "options": {
+            "fields": [
+              "run"
+            ],
+            "keepFields": false,
+            "naming": {
+              "asLabels": true
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "",
+          "displayName": "${__field.labels.run}",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "showPoints": "auto",
+            "axisLabel": ""
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "step"
+            },
+            "properties": [
+              {
+                "id": "custom.axisLabel",
+                "value": "epoch"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "xField": "step",
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "type": "table",
+      "title": "Runs: selected thresholds on val (tau sweep)",
+      "description": "selection rule: best val quality with cost <= random baseline",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "mlflow"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 33,
+        "w": 24,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "mlflow"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.name AS run, (SELECT value FROM tags t WHERE t.run_uuid = r.run_uuid AND t.key = 'pool') AS pool, (SELECT value FROM tags t WHERE t.run_uuid = r.run_uuid AND t.key = 'config') AS config, (SELECT value FROM metrics x WHERE x.run_uuid = r.run_uuid AND x.key = 'epochs_run' ORDER BY x.step DESC, x.timestamp DESC LIMIT 1) AS epochs, (SELECT value FROM metrics x WHERE x.run_uuid = r.run_uuid AND x.key = 'best_val_loss' ORDER BY x.step DESC, x.timestamp DESC LIMIT 1) AS best_val_loss, (SELECT value FROM metrics x WHERE x.run_uuid = r.run_uuid AND x.key = 'tau.tau' ORDER BY x.step DESC, x.timestamp DESC LIMIT 1) AS tau, (SELECT value FROM metrics x WHERE x.run_uuid = r.run_uuid AND x.key = 'tau.halt_tau' ORDER BY x.step DESC, x.timestamp DESC LIMIT 1) AS halt_tau, (SELECT value FROM metrics x WHERE x.run_uuid = r.run_uuid AND x.key = 'tau.val_quality' ORDER BY x.step DESC, x.timestamp DESC LIMIT 1) AS val_quality, (SELECT value FROM metrics x WHERE x.run_uuid = r.run_uuid AND x.key = 'tau.val_cost_usd' ORDER BY x.step DESC, x.timestamp DESC LIMIT 1) AS val_cost_usd, (SELECT value FROM metrics x WHERE x.run_uuid = r.run_uuid AND x.key = 'tau.random_quality' ORDER BY x.step DESC, x.timestamp DESC LIMIT 1) AS random_quality, (SELECT value FROM metrics x WHERE x.run_uuid = r.run_uuid AND x.key = 'tau.oracle.oracle_quality' ORDER BY x.step DESC, x.timestamp DESC LIMIT 1) AS oracle_quality, r.status AS status FROM runs r WHERE r.name IN (${run:sqlstring}) AND r.lifecycle_stage = 'active' ORDER BY r.name",
+          "queryText": "SELECT r.name AS run, (SELECT value FROM tags t WHERE t.run_uuid = r.run_uuid AND t.key = 'pool') AS pool, (SELECT value FROM tags t WHERE t.run_uuid = r.run_uuid AND t.key = 'config') AS config, (SELECT value FROM metrics x WHERE x.run_uuid = r.run_uuid AND x.key = 'epochs_run' ORDER BY x.step DESC, x.timestamp DESC LIMIT 1) AS epochs, (SELECT value FROM metrics x WHERE x.run_uuid = r.run_uuid AND x.key = 'best_val_loss' ORDER BY x.step DESC, x.timestamp DESC LIMIT 1) AS best_val_loss, (SELECT value FROM metrics x WHERE x.run_uuid = r.run_uuid AND x.key = 'tau.tau' ORDER BY x.step DESC, x.timestamp DESC LIMIT 1) AS tau, (SELECT value FROM metrics x WHERE x.run_uuid = r.run_uuid AND x.key = 'tau.halt_tau' ORDER BY x.step DESC, x.timestamp DESC LIMIT 1) AS halt_tau, (SELECT value FROM metrics x WHERE x.run_uuid = r.run_uuid AND x.key = 'tau.val_quality' ORDER BY x.step DESC, x.timestamp DESC LIMIT 1) AS val_quality, (SELECT value FROM metrics x WHERE x.run_uuid = r.run_uuid AND x.key = 'tau.val_cost_usd' ORDER BY x.step DESC, x.timestamp DESC LIMIT 1) AS val_cost_usd, (SELECT value FROM metrics x WHERE x.run_uuid = r.run_uuid AND x.key = 'tau.random_quality' ORDER BY x.step DESC, x.timestamp DESC LIMIT 1) AS random_quality, (SELECT value FROM metrics x WHERE x.run_uuid = r.run_uuid AND x.key = 'tau.oracle.oracle_quality' ORDER BY x.step DESC, x.timestamp DESC LIMIT 1) AS oracle_quality, r.status AS status FROM runs r WHERE r.name IN (${run:sqlstring}) AND r.lifecycle_stage = 'active' ORDER BY r.name",
+          "timeColumns": []
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 4
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      }
+    },
+    {
+      "type": "table",
+      "title": "Alarm log",
+      "description": "",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "mlflow"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 41,
+        "w": 24,
+        "h": 6
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "mlflow"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.name AS run, t.value AS alarms FROM runs r JOIN tags t ON t.run_uuid = r.run_uuid AND t.key = 'alarms' WHERE r.name IN (${run:sqlstring}) ORDER BY r.name",
+          "queryText": "SELECT r.name AS run, t.value AS alarms FROM runs r JOIN tags t ON t.run_uuid = r.run_uuid AND t.key = 'alarms' WHERE r.name IN (${run:sqlstring}) ORDER BY r.name",
+          "timeColumns": []
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 4
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      }
+    },
+    {
+      "type": "row",
+      "title": "Simulator RL (per update)",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 47,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "type": "trend",
+      "title": "Val reward at lambda index ${lam}",
+      "description": "lambda index 0..4 = 0.1, 0.3, 0.6, 1.0, 2.0 (choose it in the 'lambda index' selector)",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "mlflow"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 48,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "mlflow"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT m.step AS step, r.name AS run, m.value AS value FROM metrics m JOIN runs r ON r.run_uuid = m.run_uuid WHERE m.key IN ('val.${lam}.reward') AND r.name IN (${rl_run:sqlstring}) AND r.lifecycle_stage = 'active' ORDER BY run, step",
+          "queryText": "SELECT m.step AS step, r.name AS run, m.value AS value FROM metrics m JOIN runs r ON r.run_uuid = m.run_uuid WHERE m.key IN ('val.${lam}.reward') AND r.name IN (${rl_run:sqlstring}) AND r.lifecycle_stage = 'active' ORDER BY run, step",
+          "timeColumns": []
+        }
+      ],
+      "transformations": [
+        {
+          "id": "partitionByValues",
+          "options": {
+            "fields": [
+              "run"
+            ],
+            "keepFields": false,
+            "naming": {
+              "asLabels": true
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "",
+          "displayName": "${__field.labels.run}",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "showPoints": "auto",
+            "axisLabel": ""
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "step"
+            },
+            "properties": [
+              {
+                "id": "custom.axisLabel",
+                "value": "update"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "xField": "step",
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "type": "trend",
+      "title": "Val quality at lambda index ${lam}",
+      "description": "lambda index 0..4 = 0.1, 0.3, 0.6, 1.0, 2.0 (choose it in the 'lambda index' selector)",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "mlflow"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 48,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "mlflow"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT m.step AS step, r.name AS run, m.value AS value FROM metrics m JOIN runs r ON r.run_uuid = m.run_uuid WHERE m.key IN ('val.${lam}.quality') AND r.name IN (${rl_run:sqlstring}) AND r.lifecycle_stage = 'active' ORDER BY run, step",
+          "queryText": "SELECT m.step AS step, r.name AS run, m.value AS value FROM metrics m JOIN runs r ON r.run_uuid = m.run_uuid WHERE m.key IN ('val.${lam}.quality') AND r.name IN (${rl_run:sqlstring}) AND r.lifecycle_stage = 'active' ORDER BY run, step",
+          "timeColumns": []
+        }
+      ],
+      "transformations": [
+        {
+          "id": "partitionByValues",
+          "options": {
+            "fields": [
+              "run"
+            ],
+            "keepFields": false,
+            "naming": {
+              "asLabels": true
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "",
+          "displayName": "${__field.labels.run}",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "showPoints": "auto",
+            "axisLabel": ""
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "step"
+            },
+            "properties": [
+              {
+                "id": "custom.axisLabel",
+                "value": "update"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "xField": "step",
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "type": "trend",
+      "title": "Mean val reward (all lambdas)",
+      "description": "",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "mlflow"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 56,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "mlflow"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT m.step AS step, r.name AS run, m.value AS value FROM metrics m JOIN runs r ON r.run_uuid = m.run_uuid WHERE m.key IN ('mean_val_reward') AND r.name IN (${rl_run:sqlstring}) AND r.lifecycle_stage = 'active' ORDER BY run, step",
+          "queryText": "SELECT m.step AS step, r.name AS run, m.value AS value FROM metrics m JOIN runs r ON r.run_uuid = m.run_uuid WHERE m.key IN ('mean_val_reward') AND r.name IN (${rl_run:sqlstring}) AND r.lifecycle_stage = 'active' ORDER BY run, step",
+          "timeColumns": []
+        }
+      ],
+      "transformations": [
+        {
+          "id": "partitionByValues",
+          "options": {
+            "fields": [
+              "run"
+            ],
+            "keepFields": false,
+            "naming": {
+              "asLabels": true
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "",
+          "displayName": "${__field.labels.run}",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "showPoints": "auto",
+            "axisLabel": ""
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "step"
+            },
+            "properties": [
+              {
+                "id": "custom.axisLabel",
+                "value": "update"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "xField": "step",
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "type": "trend",
+      "title": "Sample-mode train return",
+      "description": "",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "mlflow"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 56,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "mlflow"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT m.step AS step, r.name AS run, m.value AS value FROM metrics m JOIN runs r ON r.run_uuid = m.run_uuid WHERE m.key IN ('train_return') AND r.name IN (${rl_run:sqlstring}) AND r.lifecycle_stage = 'active' ORDER BY run, step",
+          "queryText": "SELECT m.step AS step, r.name AS run, m.value AS value FROM metrics m JOIN runs r ON r.run_uuid = m.run_uuid WHERE m.key IN ('train_return') AND r.name IN (${rl_run:sqlstring}) AND r.lifecycle_stage = 'active' ORDER BY run, step",
+          "timeColumns": []
+        }
+      ],
+      "transformations": [
+        {
+          "id": "partitionByValues",
+          "options": {
+            "fields": [
+              "run"
+            ],
+            "keepFields": false,
+            "naming": {
+              "asLabels": true
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "",
+          "displayName": "${__field.labels.run}",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "showPoints": "auto",
+            "axisLabel": ""
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "step"
+            },
+            "properties": [
+              {
+                "id": "custom.axisLabel",
+                "value": "update"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "xField": "step",
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "type": "trend",
+      "title": "Policy entropy",
+      "description": "nats over the pool; ln 4 = 1.39 is uniform",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "mlflow"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 56,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "mlflow"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT m.step AS step, r.name AS run, m.value AS value FROM metrics m JOIN runs r ON r.run_uuid = m.run_uuid WHERE m.key IN ('entropy') AND r.name IN (${rl_run:sqlstring}) AND r.lifecycle_stage = 'active' ORDER BY run, step",
+          "queryText": "SELECT m.step AS step, r.name AS run, m.value AS value FROM metrics m JOIN runs r ON r.run_uuid = m.run_uuid WHERE m.key IN ('entropy') AND r.name IN (${rl_run:sqlstring}) AND r.lifecycle_stage = 'active' ORDER BY run, step",
+          "timeColumns": []
+        }
+      ],
+      "transformations": [
+        {
+          "id": "partitionByValues",
+          "options": {
+            "fields": [
+              "run"
+            ],
+            "keepFields": false,
+            "naming": {
+              "asLabels": true
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "",
+          "displayName": "${__field.labels.run}",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "showPoints": "auto",
+            "axisLabel": ""
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "step"
+            },
+            "properties": [
+              {
+                "id": "custom.axisLabel",
+                "value": "update"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "xField": "step",
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "type": "table",
+      "title": "RL: last val check per lambda",
+      "description": "the saved model is the best check that passed the safety guard",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "mlflow"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 64,
+        "w": 24,
+        "h": 10
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "mlflow"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.name AS run, 0.1 AS lambda, (SELECT value FROM metrics x WHERE x.run_uuid = r.run_uuid AND x.key = 'val.0.quality' ORDER BY x.step DESC, x.timestamp DESC LIMIT 1) AS quality, (SELECT value FROM metrics x WHERE x.run_uuid = r.run_uuid AND x.key = 'val.0.cost_usd' ORDER BY x.step DESC, x.timestamp DESC LIMIT 1) AS cost_usd, (SELECT value FROM metrics x WHERE x.run_uuid = r.run_uuid AND x.key = 'val.0.reward' ORDER BY x.step DESC, x.timestamp DESC LIMIT 1) AS reward, (SELECT value FROM metrics x WHERE x.run_uuid = r.run_uuid AND x.key = 'val.0.escalation_rate' ORDER BY x.step DESC, x.timestamp DESC LIMIT 1) AS escalation_rate FROM runs r WHERE r.name IN (${rl_run:sqlstring}) AND r.lifecycle_stage = 'active' UNION ALL SELECT r.name AS run, 0.3 AS lambda, (SELECT value FROM metrics x WHERE x.run_uuid = r.run_uuid AND x.key = 'val.1.quality' ORDER BY x.step DESC, x.timestamp DESC LIMIT 1) AS quality, (SELECT value FROM metrics x WHERE x.run_uuid = r.run_uuid AND x.key = 'val.1.cost_usd' ORDER BY x.step DESC, x.timestamp DESC LIMIT 1) AS cost_usd, (SELECT value FROM metrics x WHERE x.run_uuid = r.run_uuid AND x.key = 'val.1.reward' ORDER BY x.step DESC, x.timestamp DESC LIMIT 1) AS reward, (SELECT value FROM metrics x WHERE x.run_uuid = r.run_uuid AND x.key = 'val.1.escalation_rate' ORDER BY x.step DESC, x.timestamp DESC LIMIT 1) AS escalation_rate FROM runs r WHERE r.name IN (${rl_run:sqlstring}) AND r.lifecycle_stage = 'active' UNION ALL SELECT r.name AS run, 0.6 AS lambda, (SELECT value FROM metrics x WHERE x.run_uuid = r.run_uuid AND x.key = 'val.2.quality' ORDER BY x.step DESC, x.timestamp DESC LIMIT 1) AS quality, (SELECT value FROM metrics x WHERE x.run_uuid = r.run_uuid AND x.key = 'val.2.cost_usd' ORDER BY x.step DESC, x.timestamp DESC LIMIT 1) AS cost_usd, (SELECT value FROM metrics x WHERE x.run_uuid = r.run_uuid AND x.key = 'val.2.reward' ORDER BY x.step DESC, x.timestamp DESC LIMIT 1) AS reward, (SELECT value FROM metrics x WHERE x.run_uuid = r.run_uuid AND x.key = 'val.2.escalation_rate' ORDER BY x.step DESC, x.timestamp DESC LIMIT 1) AS escalation_rate FROM runs r WHERE r.name IN (${rl_run:sqlstring}) AND r.lifecycle_stage = 'active' UNION ALL SELECT r.name AS run, 1.0 AS lambda, (SELECT value FROM metrics x WHERE x.run_uuid = r.run_uuid AND x.key = 'val.3.quality' ORDER BY x.step DESC, x.timestamp DESC LIMIT 1) AS quality, (SELECT value FROM metrics x WHERE x.run_uuid = r.run_uuid AND x.key = 'val.3.cost_usd' ORDER BY x.step DESC, x.timestamp DESC LIMIT 1) AS cost_usd, (SELECT value FROM metrics x WHERE x.run_uuid = r.run_uuid AND x.key = 'val.3.reward' ORDER BY x.step DESC, x.timestamp DESC LIMIT 1) AS reward, (SELECT value FROM metrics x WHERE x.run_uuid = r.run_uuid AND x.key = 'val.3.escalation_rate' ORDER BY x.step DESC, x.timestamp DESC LIMIT 1) AS escalation_rate FROM runs r WHERE r.name IN (${rl_run:sqlstring}) AND r.lifecycle_stage = 'active' UNION ALL SELECT r.name AS run, 2.0 AS lambda, (SELECT value FROM metrics x WHERE x.run_uuid = r.run_uuid AND x.key = 'val.4.quality' ORDER BY x.step DESC, x.timestamp DESC LIMIT 1) AS quality, (SELECT value FROM metrics x WHERE x.run_uuid = r.run_uuid AND x.key = 'val.4.cost_usd' ORDER BY x.step DESC, x.timestamp DESC LIMIT 1) AS cost_usd, (SELECT value FROM metrics x WHERE x.run_uuid = r.run_uuid AND x.key = 'val.4.reward' ORDER BY x.step DESC, x.timestamp DESC LIMIT 1) AS reward, (SELECT value FROM metrics x WHERE x.run_uuid = r.run_uuid AND x.key = 'val.4.escalation_rate' ORDER BY x.step DESC, x.timestamp DESC LIMIT 1) AS escalation_rate FROM runs r WHERE r.name IN (${rl_run:sqlstring}) AND r.lifecycle_stage = 'active' ORDER BY run, lambda",
+          "queryText": "SELECT r.name AS run, 0.1 AS lambda, (SELECT value FROM metrics x WHERE x.run_uuid = r.run_uuid AND x.key = 'val.0.quality' ORDER BY x.step DESC, x.timestamp DESC LIMIT 1) AS quality, (SELECT value FROM metrics x WHERE x.run_uuid = r.run_uuid AND x.key = 'val.0.cost_usd' ORDER BY x.step DESC, x.timestamp DESC LIMIT 1) AS cost_usd, (SELECT value FROM metrics x WHERE x.run_uuid = r.run_uuid AND x.key = 'val.0.reward' ORDER BY x.step DESC, x.timestamp DESC LIMIT 1) AS reward, (SELECT value FROM metrics x WHERE x.run_uuid = r.run_uuid AND x.key = 'val.0.escalation_rate' ORDER BY x.step DESC, x.timestamp DESC LIMIT 1) AS escalation_rate FROM runs r WHERE r.name IN (${rl_run:sqlstring}) AND r.lifecycle_stage = 'active' UNION ALL SELECT r.name AS run, 0.3 AS lambda, (SELECT value FROM metrics x WHERE x.run_uuid = r.run_uuid AND x.key = 'val.1.quality' ORDER BY x.step DESC, x.timestamp DESC LIMIT 1) AS quality, (SELECT value FROM metrics x WHERE x.run_uuid = r.run_uuid AND x.key = 'val.1.cost_usd' ORDER BY x.step DESC, x.timestamp DESC LIMIT 1) AS cost_usd, (SELECT value FROM metrics x WHERE x.run_uuid = r.run_uuid AND x.key = 'val.1.reward' ORDER BY x.step DESC, x.timestamp DESC LIMIT 1) AS reward, (SELECT value FROM metrics x WHERE x.run_uuid = r.run_uuid AND x.key = 'val.1.escalation_rate' ORDER BY x.step DESC, x.timestamp DESC LIMIT 1) AS escalation_rate FROM runs r WHERE r.name IN (${rl_run:sqlstring}) AND r.lifecycle_stage = 'active' UNION ALL SELECT r.name AS run, 0.6 AS lambda, (SELECT value FROM metrics x WHERE x.run_uuid = r.run_uuid AND x.key = 'val.2.quality' ORDER BY x.step DESC, x.timestamp DESC LIMIT 1) AS quality, (SELECT value FROM metrics x WHERE x.run_uuid = r.run_uuid AND x.key = 'val.2.cost_usd' ORDER BY x.step DESC, x.timestamp DESC LIMIT 1) AS cost_usd, (SELECT value FROM metrics x WHERE x.run_uuid = r.run_uuid AND x.key = 'val.2.reward' ORDER BY x.step DESC, x.timestamp DESC LIMIT 1) AS reward, (SELECT value FROM metrics x WHERE x.run_uuid = r.run_uuid AND x.key = 'val.2.escalation_rate' ORDER BY x.step DESC, x.timestamp DESC LIMIT 1) AS escalation_rate FROM runs r WHERE r.name IN (${rl_run:sqlstring}) AND r.lifecycle_stage = 'active' UNION ALL SELECT r.name AS run, 1.0 AS lambda, (SELECT value FROM metrics x WHERE x.run_uuid = r.run_uuid AND x.key = 'val.3.quality' ORDER BY x.step DESC, x.timestamp DESC LIMIT 1) AS quality, (SELECT value FROM metrics x WHERE x.run_uuid = r.run_uuid AND x.key = 'val.3.cost_usd' ORDER BY x.step DESC, x.timestamp DESC LIMIT 1) AS cost_usd, (SELECT value FROM metrics x WHERE x.run_uuid = r.run_uuid AND x.key = 'val.3.reward' ORDER BY x.step DESC, x.timestamp DESC LIMIT 1) AS reward, (SELECT value FROM metrics x WHERE x.run_uuid = r.run_uuid AND x.key = 'val.3.escalation_rate' ORDER BY x.step DESC, x.timestamp DESC LIMIT 1) AS escalation_rate FROM runs r WHERE r.name IN (${rl_run:sqlstring}) AND r.lifecycle_stage = 'active' UNION ALL SELECT r.name AS run, 2.0 AS lambda, (SELECT value FROM metrics x WHERE x.run_uuid = r.run_uuid AND x.key = 'val.4.quality' ORDER BY x.step DESC, x.timestamp DESC LIMIT 1) AS quality, (SELECT value FROM metrics x WHERE x.run_uuid = r.run_uuid AND x.key = 'val.4.cost_usd' ORDER BY x.step DESC, x.timestamp DESC LIMIT 1) AS cost_usd, (SELECT value FROM metrics x WHERE x.run_uuid = r.run_uuid AND x.key = 'val.4.reward' ORDER BY x.step DESC, x.timestamp DESC LIMIT 1) AS reward, (SELECT value FROM metrics x WHERE x.run_uuid = r.run_uuid AND x.key = 'val.4.escalation_rate' ORDER BY x.step DESC, x.timestamp DESC LIMIT 1) AS escalation_rate FROM runs r WHERE r.name IN (${rl_run:sqlstring}) AND r.lifecycle_stage = 'active' ORDER BY run, lambda",
+          "timeColumns": []
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 4
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      }
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+apiVersion: 1
+datasources:
+  - name: MLflow
+    uid: mlflow
+    type: frser-sqlite-datasource
+    access: proxy
+    isDefault: true
+    jsonData:
+      path: /mlflow/mlflow.db
+      pathPrefix: "file:"
+      pathOptions: "mode=ro"

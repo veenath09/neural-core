@@ -93,7 +93,17 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("run_dirs", nargs="+", type=Path)
     ap.add_argument("--reselect", action="store_true", help="re-apply the rule to saved tau_sweep.csv files")
+    ap.add_argument("--track", action="store_true", help="log the choice and curve to the run's MLflow run")
     a = ap.parse_args()
     for d in a.run_dirs:
         reselect(d) if a.reselect else sweep(d)
         print(d, (d / "tau.json").read_text())
+        run_id = json.loads((d / "metrics.json").read_text()).get("mlflow_run_id")
+        if a.track and run_id:
+            from train.tracking import Tracker
+
+            t = Tracker("", run_id=run_id)
+            t.log({"tau": json.loads((d / "tau.json").read_text())})
+            t.artifact(d / "tau_sweep.csv")
+            t.artifact(d / "tau.json")
+            t.end()

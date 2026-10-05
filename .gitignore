@@ -19,3 +19,7 @@ results/
 *.env 
 # secrets
 .env
+
+# MLflow tracking store (local)
+monitoring/mlflow/
+mlruns/

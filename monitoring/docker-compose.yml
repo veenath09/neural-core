@@ -1,0 +1,20 @@
+# Grafana over the local MLflow store (monitoring/mlflow/mlflow.db), read-only.
+#   docker compose -f monitoring/docker-compose.yml up -d    ->  http://localhost:3000  (admin / admin)
+services:
+  grafana:
+    image: grafana/grafana:12.2.0
+    container_name: neural-core-grafana
+    ports:
+      - "127.0.0.1:3000:3000"          # local only
+    environment:
+      GF_INSTALL_PLUGINS: frser-sqlite-datasource
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/training.json
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - ./mlflow:/mlflow:ro
+    restart: unless-stopped
