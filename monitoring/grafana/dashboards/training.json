@@ -184,6 +184,13 @@
               "asLabels": true
             }
           }
+        },
+        {
+          "id": "joinByField",
+          "options": {
+            "byField": "step",
+            "mode": "outer"
+          }
         }
       ],
       "fieldConfig": {
@@ -207,6 +214,14 @@
               {
                 "id": "custom.axisLabel",
                 "value": "epoch"
+              },
+              {
+                "id": "unit",
+                "value": "none"
+              },
+              {
+                "id": "decimals",
+                "value": 0
               }
             ]
           }
@@ -263,6 +278,13 @@
               "asLabels": true
             }
           }
+        },
+        {
+          "id": "joinByField",
+          "options": {
+            "byField": "step",
+            "mode": "outer"
+          }
         }
       ],
       "fieldConfig": {
@@ -286,6 +308,14 @@
               {
                 "id": "custom.axisLabel",
                 "value": "epoch"
+              },
+              {
+                "id": "unit",
+                "value": "none"
+              },
+              {
+                "id": "decimals",
+                "value": 0
               }
             ]
           }
@@ -342,6 +372,13 @@
               "asLabels": true
             }
           }
+        },
+        {
+          "id": "joinByField",
+          "options": {
+            "byField": "step",
+            "mode": "outer"
+          }
         }
       ],
       "fieldConfig": {
@@ -365,6 +402,14 @@
               {
                 "id": "custom.axisLabel",
                 "value": "epoch"
+              },
+              {
+                "id": "unit",
+                "value": "none"
+              },
+              {
+                "id": "decimals",
+                "value": 0
               }
             ]
           }
@@ -421,6 +466,13 @@
               "asLabels": true
             }
           }
+        },
+        {
+          "id": "joinByField",
+          "options": {
+            "byField": "step",
+            "mode": "outer"
+          }
         }
       ],
       "fieldConfig": {
@@ -444,6 +496,14 @@
               {
                 "id": "custom.axisLabel",
                 "value": "epoch"
+              },
+              {
+                "id": "unit",
+                "value": "none"
+              },
+              {
+                "id": "decimals",
+                "value": 0
               }
             ]
           }
@@ -500,6 +560,13 @@
               "asLabels": true
             }
           }
+        },
+        {
+          "id": "joinByField",
+          "options": {
+            "byField": "step",
+            "mode": "outer"
+          }
         }
       ],
       "fieldConfig": {
@@ -523,6 +590,14 @@
               {
                 "id": "custom.axisLabel",
                 "value": "epoch"
+              },
+              {
+                "id": "unit",
+                "value": "none"
+              },
+              {
+                "id": "decimals",
+                "value": 0
               }
             ]
           }
@@ -579,6 +654,13 @@
               "asLabels": true
             }
           }
+        },
+        {
+          "id": "joinByField",
+          "options": {
+            "byField": "step",
+            "mode": "outer"
+          }
         }
       ],
       "fieldConfig": {
@@ -602,6 +684,14 @@
               {
                 "id": "custom.axisLabel",
                 "value": "epoch"
+              },
+              {
+                "id": "unit",
+                "value": "none"
+              },
+              {
+                "id": "decimals",
+                "value": 0
               }
             ]
           }
@@ -658,6 +748,13 @@
               "asLabels": true
             }
           }
+        },
+        {
+          "id": "joinByField",
+          "options": {
+            "byField": "step",
+            "mode": "outer"
+          }
         }
       ],
       "fieldConfig": {
@@ -681,6 +778,14 @@
               {
                 "id": "custom.axisLabel",
                 "value": "epoch"
+              },
+              {
+                "id": "unit",
+                "value": "none"
+              },
+              {
+                "id": "decimals",
+                "value": 0
               }
             ]
           }
@@ -737,6 +842,13 @@
               "asLabels": true
             }
           }
+        },
+        {
+          "id": "joinByField",
+          "options": {
+            "byField": "step",
+            "mode": "outer"
+          }
         }
       ],
       "fieldConfig": {
@@ -760,6 +872,14 @@
               {
                 "id": "custom.axisLabel",
                 "value": "epoch"
+              },
+              {
+                "id": "unit",
+                "value": "none"
+              },
+              {
+                "id": "decimals",
+                "value": 0
               }
             ]
           }
@@ -816,6 +936,13 @@
               "asLabels": true
             }
           }
+        },
+        {
+          "id": "joinByField",
+          "options": {
+            "byField": "step",
+            "mode": "outer"
+          }
         }
       ],
       "fieldConfig": {
@@ -839,6 +966,14 @@
               {
                 "id": "custom.axisLabel",
                 "value": "epoch"
+              },
+              {
+                "id": "unit",
+                "value": "none"
+              },
+              {
+                "id": "decimals",
+                "value": 0
               }
             ]
           }
@@ -895,6 +1030,13 @@
               "asLabels": true
             }
           }
+        },
+        {
+          "id": "joinByField",
+          "options": {
+            "byField": "step",
+            "mode": "outer"
+          }
         }
       ],
       "fieldConfig": {
@@ -918,6 +1060,14 @@
               {
                 "id": "custom.axisLabel",
                 "value": "epoch"
+              },
+              {
+                "id": "unit",
+                "value": "none"
+              },
+              {
+                "id": "decimals",
+                "value": 0
               }
             ]
           }
@@ -1062,6 +1212,13 @@
               "asLabels": true
             }
           }
+        },
+        {
+          "id": "joinByField",
+          "options": {
+            "byField": "step",
+            "mode": "outer"
+          }
         }
       ],
       "fieldConfig": {
@@ -1085,6 +1242,14 @@
               {
                 "id": "custom.axisLabel",
                 "value": "update"
+              },
+              {
+                "id": "unit",
+                "value": "none"
+              },
+              {
+                "id": "decimals",
+                "value": 0
               }
             ]
           }
@@ -1141,6 +1306,13 @@
               "asLabels": true
             }
           }
+        },
+        {
+          "id": "joinByField",
+          "options": {
+            "byField": "step",
+            "mode": "outer"
+          }
         }
       ],
       "fieldConfig": {
@@ -1164,6 +1336,14 @@
               {
                 "id": "custom.axisLabel",
                 "value": "update"
+              },
+              {
+                "id": "unit",
+                "value": "none"
+              },
+              {
+                "id": "decimals",
+                "value": 0
               }
             ]
           }
@@ -1220,6 +1400,13 @@
               "asLabels": true
             }
           }
+        },
+        {
+          "id": "joinByField",
+          "options": {
+            "byField": "step",
+            "mode": "outer"
+          }
         }
       ],
       "fieldConfig": {
@@ -1243,6 +1430,14 @@
               {
                 "id": "custom.axisLabel",
                 "value": "update"
+              },
+              {
+                "id": "unit",
+                "value": "none"
+              },
+              {
+                "id": "decimals",
+                "value": 0
               }
             ]
           }
@@ -1299,6 +1494,13 @@
               "asLabels": true
             }
           }
+        },
+        {
+          "id": "joinByField",
+          "options": {
+            "byField": "step",
+            "mode": "outer"
+          }
         }
       ],
       "fieldConfig": {
@@ -1322,6 +1524,14 @@
               {
                 "id": "custom.axisLabel",
                 "value": "update"
+              },
+              {
+                "id": "unit",
+                "value": "none"
+              },
+              {
+                "id": "decimals",
+                "value": 0
               }
             ]
           }
@@ -1378,6 +1588,13 @@
               "asLabels": true
             }
           }
+        },
+        {
+          "id": "joinByField",
+          "options": {
+            "byField": "step",
+            "mode": "outer"
+          }
         }
       ],
       "fieldConfig": {
@@ -1401,6 +1618,14 @@
               {
                 "id": "custom.axisLabel",
                 "value": "update"
+              },
+              {
+                "id": "unit",
+                "value": "none"
+              },
+              {
+                "id": "decimals",
+                "value": 0
               }
             ]
           }

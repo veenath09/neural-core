@@ -40,13 +40,16 @@ def trend(title: str, metrics: list[str], run_var: str, x: int, y: int, w: int =
         "type": "trend", "title": title, "description": description, "datasource": DS,
         "gridPos": {"x": x, "y": y, "w": w, "h": h},
         "targets": [_target(series_sql(metrics, run_var, label_with_key))],
+        # the trend panel takes one frame: split by run, then outer-join the series back on step
         "transformations": [{"id": "partitionByValues",
-                             "options": {"fields": ["run"], "keepFields": False, "naming": {"asLabels": True}}}],
+                             "options": {"fields": ["run"], "keepFields": False, "naming": {"asLabels": True}}},
+                            {"id": "joinByField", "options": {"byField": "step", "mode": "outer"}}],
         "fieldConfig": {"defaults": {"unit": unit, "displayName": "${__field.labels.run}",
                                      "custom": {"drawStyle": "line", "lineWidth": 2, "showPoints": "auto",
                                                 "axisLabel": ""}},
                         "overrides": [{"matcher": {"id": "byName", "options": "step"},
-                                       "properties": [{"id": "custom.axisLabel", "value": xlabel}]}]},
+                                       "properties": [{"id": "custom.axisLabel", "value": xlabel},
+                                                      {"id": "unit", "value": "none"}, {"id": "decimals", "value": 0}]}]},
         "options": {"xField": "step", "legend": {"displayMode": "table", "placement": "right", "showLegend": True},
                     "tooltip": {"mode": "multi"}},
     }
