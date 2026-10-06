@@ -29,7 +29,15 @@
         "refresh": 2,
         "multi": true,
         "includeAll": true,
-        "current": {},
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
         "sort": 1,
         "options": []
       },
@@ -46,7 +54,15 @@
         "refresh": 2,
         "multi": true,
         "includeAll": true,
-        "current": {},
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
         "sort": 1,
         "options": []
       },
@@ -63,7 +79,15 @@
         "refresh": 2,
         "multi": true,
         "includeAll": true,
-        "current": {},
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
         "sort": 1,
         "options": []
       },

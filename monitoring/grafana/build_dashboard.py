@@ -73,8 +73,10 @@ def row(title: str, y: int) -> dict:
 
 
 def variable(name: str, label: str, sql: str, multi: bool = True) -> dict:
+    # Default to All: with an empty selection Grafana renders ${var:sqlstring} as '' and every panel is empty.
+    current = {"selected": True, "text": ["All"], "value": ["$__all"]} if multi else {}
     return {"name": name, "label": label, "type": "query", "datasource": DS, "query": sql,
-            "definition": sql, "refresh": 2, "multi": multi, "includeAll": multi, "current": {},
+            "definition": sql, "refresh": 2, "multi": multi, "includeAll": multi, "current": current,
             "sort": 1, "options": []}
 
 
