@@ -24,7 +24,7 @@
 
 ---
 
-## 1a. Design decisions v1.2 (supersede later sections where they conflict)
+## 1a. Design decisions v1.3 (supersede later sections where they conflict)
 
 Settled after code review, before Week 1 coding. Where §2–§8 disagree with this section, this section wins.
 
@@ -53,8 +53,8 @@ Two loops, two kinds of state:
 
 Per decision:
 
-1. **Memory update (once).** `obs` = encoding of the previous round's outcome. `surprise = obs − W·key(obs)`; `rate = CfCGate(surprise)`; `W ← W − rate · ∇‖W·key(obs) − value(obs)‖²` (TTT-Linear closed form). Log `‖surprise‖` and `rate`.
-2. **Reasoning (2 × 3).** Every L-step sees the same input: pooled L-tokens + memory readout `W·query(z_H)`. `z_L ← L_block(z_L + z_H + input)`. After 3 L-steps, `z_H ← H_block(z_H + z_L)`. `z_L` restarts from its learned init each decision.
+1. **Memory write (at most once).** Store the newest round outcome in `W`. Exact equations, gate and timing in **D11** (superseded text: `surprise = obs − W·key(obs)`, "TTT-Linear closed form"). Log `‖surprise‖`, `rate` and `α`.
+2. **Reasoning (2 × 3).** Every L-step sees the same input: pooled L-tokens + memory readout `W·query(z_H)`. `z_L ← L_block(z_L + z_H + input)`. After 3 L-steps, `z_H ← H_block(z_H + z_L)`. `z_L` restarts from a fixed initial state each decision (D11).
 3. Heads read the final `z_H`.
 
 **Trace length k = 2** (not 4). With episodes of 3–6 steps, k = 4 shows almost the whole history explicitly and the memory has nothing to add; k = 2 forces older history through `W`.
@@ -64,8 +64,9 @@ Ablations then mean:
 | Config | Change |
 |---|---|
 | `gate_off` | `rate` = one learned constant |
+| `gate_stateless` | `rate` = σ(MLP(gate input)): same input as the CfC gate, no state, no time (D11) |
 | `memory_off` | No `W`; memory readout = 0 |
-| `context_free` | Trace tokens, budget token **and** memory readout masked |
+| `context_free` | Earlier steps' trace, task token, budget token **and** memory readout masked (D10, D11) |
 
 ### D3. Outcome rules
 
@@ -156,9 +157,63 @@ class DecisionRecord:
 - **Step outcome.** A step's outcome is its last round's answer. Propagation uses the tier of the model that gave that final wrong answer.
 - **TTT surprise.** `surprise = value(obs) − W·key(obs)`. The gate rate is one scalar per decision. At an episode's first decision there is no outcome to store, so the memory update is skipped. Gradients flow through `W` across the whole episode.
 - **Sources (checked on the data).** Kept: MMLU (grouped), HellaSwag, ARC-Challenge, Winogrande, MBPP → 5 step types. Dropped: grade-school-math (0.25-step scores), MT-Bench (graded), small miscellaneous evals. Duplicate prompt texts (16) are removed before splitting.
-- **Pool.** mistral-7b-chat, mixtral-8x7b-chat, gpt-3.5-turbo-1106, gpt-4-1106-preview (mean cost per call rises with tier). Costs are RouterBench's per-prompt `total_cost`, prices as of the RouterBench release (2024-03).
+- **Pool.** mistral-7b-chat, mixtral-8x7b-chat, gpt-3.5-turbo-1106, gpt-4-1106-preview (mean cost per call rises with tier). Costs are RouterBench's per-prompt `total_cost` (API prices for proprietary models, Together AI for open models; the paper gives no pricing date).
 - **ModelCard v1** (until `model_onboarding.md` lands): `model_id, provider, tier, mean_cost_usd, price_source, price_date, capability` where `capability` = train accuracy per step type + log10(mean cost).
 - **Sequencing.** `env.py` and the episode oracle move to Day 5 (D1 needs them for the behaviour policy).
+
+### D11. Reference-grounded design (v1.2 → v1.3)
+
+Checked against the code and papers of HRM-Text (`models/baselines/hrm_nocarry_bp_warmup.py`, arXiv 2605.20613), HRM (`models/hrm/hrm_act_v1.py`, arXiv 2506.21734), TRM (`models/recursive_reasoning/trm.py`, arXiv 2510.04871), ttt-lm-pytorch (`ttt.py`, arXiv 2407.04620), titans-pytorch (`neural_memory.py`, arXiv 2501.00663), ncps (`torch/cfc_cell.py`) and CfC (arXiv 2106.13898), and RouterBench (arXiv 2403.12031). Where D2 or §5 disagree, this section wins.
+
+**Core (`controller/core.py`)**
+
+- Each module = 2 pre-norm **SwiGLU MLP** blocks, γ-free RMSNorm before each block and at the module exit (MagicNorm, HRM-Text §2.1.1). No attention: each module holds one vector, and TRM finds MLPs better on small fixed contexts.
+- `z_L` starts from a **fixed buffer** (truncated normal, std 1), as in HRM, HRM-Text and TRM. `z_H` starts from `h = RMSNorm(mean(H tokens))`.
+- L-step: `z_L ← L(z_L + z_H + x)` with `x` injected every step (HRM/TRM; HRM-Text injects only through `z_H⁰`). H-step: `z_H ← H(z_H + z_L + h)`. Re-injecting `h` is our deviation: under truncated backprop it is the only path by which the task and budget encoders receive gradient.
+- Gradient horizon = HRM-Text staircase: `bp = 2 + ⌊min(1, step / (0.2·total)) · 3⌋` module calls, split `H_bp = min(2, bp − 1)`, `L_bp = bp − H_bp`; earlier calls run without grad. TRM shows a 1-step gradient is weak, so a run may start at `bp_min = 3`.
+- **EMA** of weights, decay 0.999 (TRM; HRM-Text uses 0.9999 at 1B scale). Validation and evaluation use the EMA weights.
+
+**Memory (`controller/memory.py`)**, TTT-Linear inner model with Titans-style forgetting, no momentum:
+
+```
+k = ‖W_k o‖⁻¹ W_k o        v = W_v o        q = ‖W_q h‖⁻¹ W_q h
+s = v − W k                                   (surprise)
+u = [s/‖s‖, log‖s‖, o]
+r = gate(u, Δt)            ∈ (0, 1)
+α = σ(w_α·[log‖s‖, o] + b_α),  b_α = −4        (forgetting, starts ≈ 0)
+W ← W₀ + (1 − α)(W − W₀) + r · s kᵀ           (W₀ learned, init 0)
+readout m = RMSNorm(W q)
+```
+
+With unit-norm `k`, one write moves `W k` exactly a fraction `r` of the way to `v` (`s' = (1 − r) s` when `α = 0`), so no clipping is needed. This is one explicit delta-rule step, not TTT's dual form.
+
+- `o` = the newest round's trace token. A pass writes when a round outcome has not been stored yet: the post-round pass stores that round; a round-2 outcome is stored at the next step's first pass; the episode's first pass stores nothing.
+- `Δt = 1 / n_steps` per write: time is measured as the fraction of the episode, so episodes of different lengths move the CfC clock at different speeds.
+- Neither TTT nor Titans feeds the error into the rate (both use the input); gating on `s` is our addition. `‖∇_W‖ = ‖s‖` here, so the gate sees both loss and gradient size.
+
+**Gate.** `full` uses a **CfC cell** (Eq. 10, ncps default mode, re-implemented): 16 units, backbone 32 (LeCun-tanh), state reset at episode start and carried across writes, time input `Δt`; `r = σ(w_r·c + b_r)`. `gate_stateless` gets the same `u` through σ(MLP) with no state or time. `gate_off` uses `r = σ(c)`. The thesis may call the memory "liquid-gated" only if `full` beats `gate_stateless`.
+
+**Heads.** Model head = additive match, `logit_m = w·SiLU(A z_H + card_m) + b`, so the pool is a list. Halt head = BCE on the D5 target (TRM-style; no Q-learning, no extra forward pass).
+
+**Inputs**
+
+- `TraceItem` gains optional `step_index` and `step_emb_key` (the prompt of that round's step), so the controller can see that an item is a retry.
+- Task token = embedding of the episode's first prompt. `context_free` also masks it, because it carries information about another step.
+- Model choice and escalation consider only models whose card mean cost ≤ `budget_left`; the controller cannot know a call's exact cost in advance.
+
+**Behaviour policy (revises D1).** The oracle share uses the **per-step** oracle (cheapest succeeding model; escalate iff the halt label is 1), not the episode oracle: re-planning after every deviation costs ~15 ms per step. The episode oracle stays the evaluation ceiling.
+
+**Configs** are Python presets in `controller/model.py`: `full`, `gate_off`, `gate_stateless`, `memory_off`, `context_free` (no YAML).
+
+**Data honesty (RouterBench paper)**
+
+- We use the 0-shot split; the paper's main MMLU/HellaSwag/ARC/Winogrande results are 5-shot. Our numbers are not comparable to its tables.
+- RouterBench judges MBPP with GPT-4, not unit tests: treat MBPP labels as noisier.
+- The paper gives no pricing date: `ModelCard.price_date = "not stated by RouterBench"`.
+- GSM8K's 0.25-step scores are an observed data issue (the paper says exact match).
+- Also report the paper's AIQ and Zero-router (non-decreasing convex hull of single models) on our 4-model pool.
+
+**Licences.** HRM, HRM-Text, ncps, CfC: Apache-2.0. ttt-lm-pytorch, titans-pytorch, TRM: MIT. Our modules re-implement from the equations; each file names its sources in a header, and `LICENSE-HRM-Text` is kept because `core.py` follows HRM-Text's schedule.
 
 ### D9. Engineering
 
@@ -269,30 +324,28 @@ For every step, `succeeds[m]` = whether pool model `m` gets it right, given the 
 ## 5. Model
 
 ```
-StepEncoder -> (h_tokens: 2×128, l_tokens: 5×128)
-Core:
-  z_H = pooled(h_tokens); z_L = learned init
+StepEncoder -> H tokens: task, budget/state           (2 × 128)
+               L tokens: current step, trace −1, −2   (3 × 128)
+h = RMSNorm(mean(H tokens));  x = mean(L tokens)
+Memory (once, if a new outcome): s = v − W k; r = CfC(u, Δt); W ← W₀ + (1−α)(W − W₀) + r s kᵀ
+x = x + RMSNorm(W q)
+Core: z_H = h; z_L = fixed init
   for cycle in 1..2:
-      for step in 1..3:
-          surprise = l_obs - predict(z_L)
-          rate     = CfCGate(surprise)
-          z_L      = TTTLinear update scaled by rate, under z_H
-      z_H = H_block(z_H, z_L)
+      for step in 1..3:  z_L = L(z_L + z_H + x)
+      z_H = H(z_H + z_L + h)
 Heads (read z_H):
-  success_prob[m] = sigmoid(match(need(z_H), capability[m]))   # per pool model
-  halt_logit      = halting head
-  complexity, confidence
+  p_success[m] = σ(w·SiLU(A z_H + card_m) + b)   # per pool model
+  p_escalate   = σ(halt(z_H))
+  complexity   = σ(cplx(z_H))                      # target band / 4
 ```
 
-- H and L use 2 MLP blocks each, pre-norm, with a final norm at each module's exit (MagicNorm pattern).
-- The model head scores each `ModelCard` by matching a requirement vector against its capability vector, so the pool is a list, not fixed slots.
-- Capability vector for the prototype = the model's train-split accuracy per step type (8 numbers) plus log price.
+Full equations and their sources in D11. The capability vector = the model's train-split accuracy per step type (5 numbers) plus log₁₀ mean cost.
 
 ### Policy at inference
 
-Pick the **cheapest model whose `success_prob ≥ τ`**; if none clear τ, pick the model with the highest `success_prob`. Sweeping τ from 0 to 1 traces the quality–cost frontier.
+Among models whose card mean cost ≤ budget left, pick the **cheapest with `p_success ≥ τ`**; if none clears τ, the one with the highest `p_success`. Sweeping τ from 0 to 1 traces the quality–cost frontier.
 
-Halting: after a step, if the chosen model's predicted success is below τ and budget allows, escalate to the next model up; otherwise stop.
+Halting (D5, D10): after round 1, a second forward pass reads `p_escalate`; escalate iff it is > 0.5 and a stronger affordable model exists, choosing that model by the τ rule over the stronger ones.
 
 ---
 
@@ -308,7 +361,7 @@ Halting: after a step, if the chosen model's predicted success is below τ and b
 | Hardware | Laptop GPU; CPU works |
 | Time per run | ~10–30 min |
 
-After training, fit one temperature on the validation set for the success probabilities. Freeze it.
+Keep an EMA of the weights (decay 0.999) and validate with it (D11). After training, fit one temperature on the validation set for the success probabilities. Freeze it.
 
 ### Configurations
 
@@ -316,10 +369,11 @@ After training, fit one temperature on the validation set for the success probab
 |---|---|
 | `full` | Everything on |
 | `gate_off` | CfC gate replaced by a fixed learned rate |
-| `memory_off` | L is a plain MLP block, no TTT, no gate |
-| `context_free` | Trace and budget tokens masked; identical otherwise |
+| `gate_stateless` | CfC gate replaced by σ(MLP) on the same input |
+| `memory_off` | No memory `W`; readout = 0 |
+| `context_free` | Earlier trace, task, budget and memory readout masked; identical otherwise |
 
-4 configs × 3 seeds = 12 runs.
+5 configs × 3 seeds = 15 runs.
 
 `context_free` is the decisive comparison: same architecture, data and training, with the only difference being whether the controller can see the workflow.
 
@@ -375,20 +429,20 @@ All numbers: mean ± 95% confidence interval over 3 seeds.
 
 | Day | Work | Done when |
 |---|---|---|
-| 6 | `encoder.py`, `core.py` with plain L | Shape tests pass; forward runs on a batch |
-| 7 | Heads, training loop, `memory_off` config end to end | First trained model beats always-cheapest on validation |
+| 6 | Contract/env additions, feature builder, `core.py` (MagicNorm blocks, staircase horizon) | Shape and gradient-horizon tests pass |
+| 7 | Memory and gates, encoder, heads, model, rollout engine, training loop; `memory_off` end to end | First trained model beats always-cheapest on validation |
 | 8 | Residual diagnostic | Plot saved; L shows within-cycle convergence and reset |
-| 9 | TTT-Linear in L, fixed rate (`gate_off`) | Trains stably; residual plot re-run |
-| 10 | CfC gate (`full`) | Trains stably; surprise and gate rate logged per step |
+| 9 | `gate_off` (memory with fixed rate) | Trains stably; residual plot re-run |
+| 10 | `full` (CfC gate) and `gate_stateless` | Trains stably; surprise, rate and α logged per write |
 
 ### Week 3: RL and evidence
 
 | Day | Work | Done when |
 |---|---|---|
-| 11 | `context_free` config; temperature calibration; start all 12 supervised runs | Masking verified (trace tokens have zero effect when masked) |
-| 12 | `env.py` and `rl.py`; add λ to the budget token | One RL run on `full` improves validation return over its supervised start |
+| 11 | `context_free` config; temperature calibration; start all 15 supervised runs | Masking verified (trace tokens have zero effect when masked) |
+| 12 | `rl.py` (env exists since Day 5); λ already in the budget token | One RL run on `full` improves validation return over its supervised start |
 | 13 | RL runs: `full` and `context_free` × 3 seeds | Checkpoints and test predictions saved |
-| 14 | Frontier sweep (τ for supervised, λ for RL), per-type table, ablation table, ECE, halting behaviour | Tables and plots generated from saved predictions |
+| 14 | Frontier sweep (τ for supervised, λ for RL), AIQ and Zero-router hull, per-type table, ablation table, ECE, halting behaviour | Tables and plots generated from saved predictions |
 | 15 | Surprise trace, latency, write-up | Draft section ready for supervisor |
 
 ---
@@ -408,11 +462,11 @@ All numbers: mean ± 95% confidence interval over 3 seeds.
 If a day slips, cut from the top:
 
 1. Learning curve.
-2. Seeds for the ablations (keep 3 for `full` vs `context_free`).
+2. Seeds for the ablations (keep 3 for `full` vs `context_free`, and for `full` vs `gate_stateless` if claiming "liquid").
 3. RL on `context_free` (keep RL on `full`, report supervised `context_free` as the comparison).
 4. Halting head (use the τ rule only).
 5. RL stage entirely (supervised results stand on their own).
-6. CfC gate: report TTT with fixed rate as the full model and the gate as next phase.
+6. CfC gate: report the memory with a fixed rate as the full model, drop the "liquid" claim, and move the gate to the next phase.
 
 Never cut: the prompt split, the `context_free` comparison, the plain-random control row, the oracle line.
 
@@ -424,8 +478,8 @@ Never cut: the prompt split, the `context_free` comparison, the plain-random con
 |---|---|---|
 | Context gives no gain | `full` ≈ `context_free` on all types | Check that dependencies in the generator actually change oracle labels; inspect retry episodes first |
 | Gain only from generator design | Gain on random chains too | Bug: context leaking into `context_free`; re-check masking |
-| TTT unstable | Loss spikes, NaNs | Clip inner update; lower inner learning rate; shorten gradient horizon |
-| Gate does nothing | `full` ≈ `gate_off` | Report honestly; check gate rate varies with surprise in the trace plot |
+| TTT unstable | Loss spikes, NaNs | Check `‖k‖ = 1` and `r ∈ (0,1)` (D11 makes each write a contraction); raise forgetting bias; shorten gradient horizon |
+| Gate does nothing | `full` ≈ `gate_off` or ≈ `gate_stateless` | Report honestly; drop the "liquid" claim; check gate rate varies with surprise in the trace plot |
 | Leakage | Test far above validation | Re-assert the prompt split |
 | Panel says data is built to favour the method | — | Random-chain control row; TwinRouterBench static set if time allows |
 
@@ -447,12 +501,12 @@ All links checked to exist. "Use" says what to take from each; nothing is forked
 | Repo | Licence note | Use |
 |---|---|---|
 | [sapientinc/HRM-Text](https://github.com/sapientinc/HRM-Text) | Apache-2.0 | H/L forward loop, MagicNorm placement, gradient-horizon warmup (`models/baselines/hrm_nocarry_bp_warmup.py`). Source of `core.py`; keep `LICENSE-HRM-Text`. |
-| [sapientinc/HRM](https://github.com/sapientinc/HRM) | check repo | Original HRM: hierarchical convergence, ACT halting, residual diagnostics |
-| [SamsungSAILMontreal/TinyRecursiveModels](https://github.com/SamsungSAILMontreal/TinyRecursiveModels) | check repo | Small recursive-reasoning reference; useful for compact training loops |
-| [test-time-training/ttt-lm-pytorch](https://github.com/test-time-training/ttt-lm-pytorch) | check repo | TTT-Linear update rule and mini-batch inner step, for `memory.py` |
-| [lucidrains/titans-pytorch](https://github.com/lucidrains/titans-pytorch) | check repo; unofficial | Surprise-gated memory updates; closest prior work to the gated L memory |
-| [mlech26l/ncps](https://github.com/mlech26l/ncps) | check repo | CfC and LTC cells in PyTorch; reference for `CfCGate` |
-| [raminmh/CfC](https://github.com/raminmh/CfC) | check repo | Original closed-form continuous-time network code |
+| [sapientinc/HRM](https://github.com/sapientinc/HRM) | Apache-2.0 | Original HRM: hierarchical convergence, ACT halting, residual diagnostics |
+| [SamsungSAILMontreal/TinyRecursiveModels](https://github.com/SamsungSAILMontreal/TinyRecursiveModels) | MIT | Small recursive-reasoning reference; useful for compact training loops |
+| [test-time-training/ttt-lm-pytorch](https://github.com/test-time-training/ttt-lm-pytorch) | MIT | TTT-Linear update rule and mini-batch inner step, for `memory.py` |
+| [lucidrains/titans-pytorch](https://github.com/lucidrains/titans-pytorch) | MIT; unofficial | Surprise-gated memory updates; closest prior work to the gated L memory |
+| [mlech26l/ncps](https://github.com/mlech26l/ncps) | Apache-2.0 | CfC and LTC cells in PyTorch; reference for `CfCGate` |
+| [raminmh/CfC](https://github.com/raminmh/CfC) | Apache-2.0 | Original closed-form continuous-time network code |
 
 ### Data and benchmarks
 
