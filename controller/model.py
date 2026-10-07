@@ -54,6 +54,8 @@ class Output:
     memory: MemoryState | None
     stats: dict[str, torch.Tensor] = field(default_factory=dict)
     residuals: list[tuple[str, float]] = field(default_factory=list)
+    policy_logits: torch.Tensor | None = None  # [B, M], D13: filled only when lam and log_price are given
+    halt_policy_logit: torch.Tensor | None = None  # [B]
 
 
 class Controller(nn.Module):
@@ -74,7 +76,8 @@ class Controller(nn.Module):
         return self.memory.init_state(batch) if self.memory is not None else None
 
     def forward(self, b: Batch, memory: MemoryState | None = None, bp_steps: int = 5,
-                record: bool = False) -> Output:
+                record: bool = False, lam: torch.Tensor | None = None,
+                log_price: torch.Tensor | None = None) -> Output:
         e = self.encoder(b, self.emb, self.cards)
         task, budget, trace, present = e.task, e.budget, e.trace, b.trace_present
         if self.cfg.context_free:  # D10/D11: keep only the current step's own rounds
@@ -83,7 +86,8 @@ class Controller(nn.Module):
             task, budget = torch.zeros_like(task), torch.zeros_like(budget)
         h = rms_norm((task + budget) / 2)
         if self.cfg.arch == "attn":
-            return self._forward_tokens(b, e, task, budget, trace, present, h, memory, bp_steps, record)
+            return self._forward_tokens(b, e, task, budget, trace, present, h, memory, bp_steps, record,
+                                        lam, log_price)
         x = (e.step + trace.sum(1)) / (1 + present.sum(1, keepdim=True).float())
         stats: dict[str, torch.Tensor] = {}
         if self.memory is not None:
@@ -91,9 +95,13 @@ class Controller(nn.Module):
             x = x + self.memory.read(memory, h)
         z_h, residuals = self.core(h, x, bp_steps, record)
         model_logits, halt_logit, complexity_logit = self.heads(z_h, e.card)
-        return Output(model_logits, halt_logit, complexity_logit, z_h, memory, stats, residuals)
+        policy_logits, halt_policy_logit = self._policy(z_h, model_logits, halt_logit, complexity_logit,
+                                                        lam, log_price)
+        return Output(model_logits, halt_logit, complexity_logit, z_h, memory, stats, residuals,
+                      policy_logits, halt_policy_logit)
 
-    def _forward_tokens(self, b, e, task, budget, trace, present, h, memory, bp_steps, record) -> Output:
+    def _forward_tokens(self, b, e, task, budget, trace, present, h, memory, bp_steps, record,
+                        lam=None, log_price=None) -> Output:
         n = task.shape[0]
         on = torch.ones(n, dtype=torch.bool, device=task.device)
         stats: dict[str, torch.Tensor] = {}
@@ -108,7 +116,17 @@ class Controller(nn.Module):
         z_seq, residuals = self.core(tokens, tokens, bp_steps, record, key_mask=valid)
         z_h = z_seq[:, STEP_SLOT]
         model_logits, halt_logit, complexity_logit = self.heads(z_h, e.card)
-        return Output(model_logits, halt_logit, complexity_logit, z_h, memory, stats, residuals)
+        policy_logits, halt_policy_logit = self._policy(z_h, model_logits, halt_logit, complexity_logit,
+                                                        lam, log_price)
+        return Output(model_logits, halt_logit, complexity_logit, z_h, memory, stats, residuals,
+                      policy_logits, halt_policy_logit)
+
+    def _policy(self, z_h, model_logits, halt_logit, complexity_logit, lam, log_price):
+        """D13: filled only when both lam and log_price are given; keeps the supervised
+        path (lam=None) bit-identical."""
+        if lam is None or log_price is None:
+            return None, None
+        return self.heads.policy(z_h, model_logits, halt_logit, complexity_logit, lam, log_price)
 
 
 def n_parameters(model: nn.Module) -> int:
