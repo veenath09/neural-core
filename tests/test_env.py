@@ -114,3 +114,26 @@ def test_trace_items_record_rounds():
     assert [(i.model_id, i.round, i.escalated, i.cost_usd) for i in s.trace] == [
         ("m0", 1, False, 1.0), ("m2", 2, True, 4.0)]
     assert [i.verifier_ok for i in s.trace] == [False, True]  # flip_p = 0
+
+
+def test_verifier_flips_are_independent_across_models_rounds_steps_and_seeds():
+    """D4 assumes independent flips; a structured hash would let trace history predict the noise."""
+    rows = [[1, 1, 1, 1]] * 2
+    t = tiny_table(rows)
+    n = 4000
+    base, models, rounds, steps, seeds = [], [], [], [], []
+    for i in range(n):
+        sk = Skeleton(f"train-{i:06d}", "random", tuple(t.prompt_ids), 1e9)
+        ep, ep1 = Episode(sk, t, IDS, seed=0), Episode(sk, t, IDS, seed=1)
+        s0 = ep.initial_state()
+        flip = lambda e, s, m: not e._verifier_ok(s, m, True)
+        f = flip(ep, s0, 0)
+        base.append(f)
+        models.append((f, flip(ep, s0, 1)))
+        rounds.append((f, flip(ep, ep.play(s0, 0), 1)))
+        steps.append((f, flip(ep, ep.end_step(ep.play(s0, 0)), 0)))
+        seeds.append((f, flip(ep1, s0, 0)))
+    assert np.mean(base) == pytest.approx(0.15, abs=0.02)
+    for name, pairs in [("models", models), ("rounds", rounds), ("steps", steps), ("seeds", seeds)]:
+        both = np.mean([a and b for a, b in pairs])
+        assert both == pytest.approx(0.15**2, abs=0.012), name

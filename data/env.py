@@ -6,7 +6,7 @@ more expensive one, then stop. The last round's answer is the step's answer."""
 
 from __future__ import annotations
 
-import zlib
+import hashlib
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 
@@ -85,7 +85,9 @@ class Episode:
 
     def _verifier_ok(self, s: EnvState, m: int, correct: bool) -> bool:
         key = f"{self.seed}|{self.skeleton.episode_id}|{s.step_index}|{s.rounds + 1}|{m}"
-        flipped = zlib.crc32(key.encode()) / 2**32 < self.flip_p
+        # blake2b, not crc32: crc32 is linear, which made flips across models, rounds and seeds correlated
+        u = int.from_bytes(hashlib.blake2b(key.encode(), digest_size=8).digest()) / 2**64
+        flipped = u < self.flip_p
         return correct != flipped
 
     def play(self, s: EnvState, m: int) -> EnvState:
