@@ -16,7 +16,8 @@ from controller.contracts import ModelCard
 
 HF_REPO = "withmartian/routerbench"
 HF_FILE = "routerbench_0shot.pkl"
-CACHE_DIR = Path("data/cache")
+RAW_DIR = Path("data/raw")  # downloads live in the project, not the Hugging Face cache
+DATA_DIR = Path("data/processed")
 
 # Sources with 0/1 scores (D3). grade-school-math scores come in 0.25 steps and MT-Bench is graded.
 SOURCES = ("mmlu", "hellaswag", "arc-challenge", "winogrande", "mbpp")
@@ -126,25 +127,33 @@ def make_model_cards(table: pd.DataFrame, pool=POOL, sources=SOURCES) -> list[Mo
     return cards
 
 
-def prepare(cache_dir: Path = CACHE_DIR, raw_path: str | None = None, seed: int = 0):
-    if raw_path is None:
-        from huggingface_hub import hf_hub_download
+def fetch_raw(raw_dir: Path = RAW_DIR) -> Path:
+    """Download the RouterBench pickle into raw_dir once; reuse it afterwards."""
+    raw_dir = Path(raw_dir)
+    path = raw_dir / HF_FILE
+    if not path.exists():
+        import huggingface_hub
 
-        raw_path = hf_hub_download(HF_REPO, HF_FILE, repo_type="dataset")
-    table = build_table(pd.read_pickle(raw_path))
+        raw_dir.mkdir(parents=True, exist_ok=True)
+        huggingface_hub.hf_hub_download(HF_REPO, HF_FILE, repo_type="dataset", local_dir=raw_dir)
+    return path
+
+
+def prepare(data_dir: Path = DATA_DIR, raw_dir: Path = RAW_DIR, seed: int = 0):
+    table = build_table(pd.read_pickle(fetch_raw(raw_dir)))
     table["split"] = split_prompts(table, seed)
     cards = make_model_cards(table)
-    cache_dir = Path(cache_dir)
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    table.to_parquet(cache_dir / "prompts.parquet", index=False)
-    (cache_dir / "pool.json").write_text(json.dumps([asdict(c) for c in cards], indent=2))
+    data_dir = Path(data_dir)
+    data_dir.mkdir(parents=True, exist_ok=True)
+    table.to_parquet(data_dir / "prompts.parquet", index=False)
+    (data_dir / "pool.json").write_text(json.dumps([asdict(c) for c in cards], indent=2))
     return table, cards
 
 
-def load_prepared(cache_dir: Path = CACHE_DIR) -> tuple[pd.DataFrame, list[ModelCard]]:
-    cache_dir = Path(cache_dir)
-    table = pd.read_parquet(cache_dir / "prompts.parquet")
-    cards = [ModelCard(**d) for d in json.loads((cache_dir / "pool.json").read_text())]
+def load_prepared(data_dir: Path = DATA_DIR) -> tuple[pd.DataFrame, list[ModelCard]]:
+    data_dir = Path(data_dir)
+    table = pd.read_parquet(data_dir / "prompts.parquet")
+    cards = [ModelCard(**d) for d in json.loads((data_dir / "pool.json").read_text())]
     return table, cards
 
 

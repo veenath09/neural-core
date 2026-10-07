@@ -10,7 +10,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from data.routerbench import CACHE_DIR, OutcomeTable, load_prepared
+from data.routerbench import DATA_DIR, OutcomeTable, load_prepared
 
 EPISODE_TYPES = ("correlated", "retry", "propagation", "random")
 TYPE_SHARES = {"correlated": 0.40, "retry": 0.25, "propagation": 0.20, "random": 0.15}
@@ -80,17 +80,17 @@ def from_frame(df: pd.DataFrame) -> list[Skeleton]:
     return out
 
 
-def load_skeletons(split: str, cache_dir: Path = CACHE_DIR) -> list[Skeleton]:
-    return from_frame(pd.read_parquet(Path(cache_dir) / f"episodes_{split}.parquet"))
+def load_skeletons(split: str, data_dir: Path = DATA_DIR) -> list[Skeleton]:
+    return from_frame(pd.read_parquet(Path(data_dir) / f"episodes_{split}.parquet"))
 
 
-def build_all(cache_dir: Path = CACHE_DIR, seed: int = 0, sizes: dict[str, int] = SIZES) -> None:
-    prompts, _ = load_prepared(cache_dir)
+def build_all(data_dir: Path = DATA_DIR, seed: int = 0, sizes: dict[str, int] = SIZES) -> None:
+    prompts, _ = load_prepared(data_dir)
     table = OutcomeTable.from_frame(prompts)
     for i, (split, n) in enumerate(sizes.items()):
         ids = prompts.loc[prompts["split"] == split, "prompt_id"].tolist()
         skeletons = generate_skeletons(table, ids, n, seed + i, split)
-        to_frame(skeletons).to_parquet(Path(cache_dir) / f"episodes_{split}.parquet", index=False)
+        to_frame(skeletons).to_parquet(Path(data_dir) / f"episodes_{split}.parquet", index=False)
         print(split, n, pd.Series([s.ep_type for s in skeletons]).value_counts().to_dict())
 
 

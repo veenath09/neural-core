@@ -164,7 +164,7 @@ class DecisionRecord:
 
 - Layout: packages at repo root (`controller/`, `data/`, `train/`, `eval/`). Delete the empty `models/` to avoid confusion with LLM "models".
 - Python **3.12**. Do not spend time on 3.14.
-- `.gitignore`: venv, `*.npy`, `*.parquet`, `data/cache/`, `checkpoints/`, `runs/`, HF cache.
+- `.gitignore`: venv, `*.npy`, `*.parquet`, `data/raw/` (downloads: RouterBench pickle, bge-small weights), `data/processed/` (built dataset), `checkpoints/`, `runs/`. Nothing is read from the Hugging Face cache.
 - Parameter count: print the measured count in `test_shapes.py`; the write-up quotes the measured number only.
 - Work on `main`; one commit per task.
 

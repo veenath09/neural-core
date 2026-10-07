@@ -9,23 +9,35 @@ from pathlib import Path
 
 import numpy as np
 
-from data.routerbench import CACHE_DIR, load_prepared
+from data.routerbench import DATA_DIR, RAW_DIR, load_prepared
 
 MODEL_NAME = "BAAI/bge-small-en-v1.5"
 DIM = 384
+MODEL_DIR = RAW_DIR / "bge-small-en-v1.5"
 
 Encoder = Callable[[list[str]], np.ndarray]
 
 
-def sentence_transformer_encoder(name: str = MODEL_NAME, device: str | None = None) -> Encoder:
+def fetch_encoder(model_dir: Path = MODEL_DIR) -> Path:
+    """Download bge-small into model_dir once; reuse it afterwards."""
+    model_dir = Path(model_dir)
+    if not (model_dir / "config.json").exists():
+        import huggingface_hub
+
+        model_dir.mkdir(parents=True, exist_ok=True)
+        huggingface_hub.snapshot_download(MODEL_NAME, local_dir=model_dir)
+    return model_dir
+
+
+def sentence_transformer_encoder(model_dir: Path = MODEL_DIR, device: str | None = None) -> Encoder:
     from sentence_transformers import SentenceTransformer
 
-    model = SentenceTransformer(name, device=device)
+    model = SentenceTransformer(str(fetch_encoder(model_dir)), device=device)
     return lambda texts: model.encode(texts, batch_size=64, normalize_embeddings=True,
                                       convert_to_numpy=True, show_progress_bar=False)
 
 
-def build_cache(ids: Sequence[str], texts: Sequence[str], encode: Encoder, cache_dir: Path = CACHE_DIR,
+def build_cache(ids: Sequence[str], texts: Sequence[str], encode: Encoder, data_dir: Path = DATA_DIR,
                 batch_size: int = 1024, dim: int = DIM) -> np.ndarray:
     chunks = []
     for start in range(0, len(texts), batch_size):
@@ -34,17 +46,17 @@ def build_cache(ids: Sequence[str], texts: Sequence[str], encode: Encoder, cache
     emb = np.concatenate(chunks)
     if emb.shape != (len(ids), dim):
         raise ValueError(f"embedding shape {emb.shape} != {(len(ids), dim)}")
-    cache_dir = Path(cache_dir)
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    np.save(cache_dir / "embeddings.npy", emb)
-    (cache_dir / "embedding_ids.json").write_text(json.dumps(list(ids)))
+    data_dir = Path(data_dir)
+    data_dir.mkdir(parents=True, exist_ok=True)
+    np.save(data_dir / "embeddings.npy", emb)
+    (data_dir / "embedding_ids.json").write_text(json.dumps(list(ids)))
     return emb
 
 
-def load_cache(cache_dir: Path = CACHE_DIR) -> tuple[np.ndarray, dict[str, int]]:
-    cache_dir = Path(cache_dir)
-    emb = np.load(cache_dir / "embeddings.npy", mmap_mode="r")
-    ids = json.loads((cache_dir / "embedding_ids.json").read_text())
+def load_cache(data_dir: Path = DATA_DIR) -> tuple[np.ndarray, dict[str, int]]:
+    data_dir = Path(data_dir)
+    emb = np.load(data_dir / "embeddings.npy", mmap_mode="r")
+    ids = json.loads((data_dir / "embedding_ids.json").read_text())
     return emb, {p: i for i, p in enumerate(ids)}
 
 

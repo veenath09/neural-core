@@ -102,3 +102,27 @@ def test_outcome_table_from_frame():
     assert ot.correct.shape == (len(t), 4) and ot.n_models == 4
     assert ot.index[t.prompt_id.iloc[5]] == 5
     assert (ot.band == t.band.to_numpy()).all()
+
+
+def test_fetch_raw_reuses_local_file_without_downloading(tmp_path, monkeypatch):
+    import huggingface_hub
+
+    from data.routerbench import HF_FILE, fetch_raw
+
+    (tmp_path / HF_FILE).write_bytes(b"x")
+    monkeypatch.setattr(huggingface_hub, "hf_hub_download", lambda *a, **k: pytest.fail("should not download"))
+    assert fetch_raw(tmp_path) == tmp_path / HF_FILE
+
+
+def test_fetch_raw_downloads_into_project_dir_not_hf_cache(tmp_path, monkeypatch):
+    import huggingface_hub
+
+    from data.routerbench import HF_FILE, fetch_raw
+
+    def fake_download(repo_id, filename, repo_type, local_dir):
+        assert local_dir == tmp_path
+        (local_dir / filename).write_bytes(b"x")
+        return str(local_dir / filename)
+
+    monkeypatch.setattr(huggingface_hub, "hf_hub_download", fake_download)
+    assert fetch_raw(tmp_path) == tmp_path / HF_FILE
