@@ -20,29 +20,39 @@ class BucketedBaseline:
         self.table = torch.zeros(n_bands, n_lams)
 
     def value(self, band: torch.Tensor, lam_idx: torch.Tensor) -> torch.Tensor:
-        """Baseline value per slot: table[band, lam_idx], shape like band/lam_idx."""
-        return self.table[band, lam_idx]
+        """Baseline value per slot: table[band, lam_idx], shape like band/lam_idx.
+
+        band/lam_idx may live on any device (e.g. the trace's accelerator
+        device); they are moved to self.table's device internally, and the
+        looked-up values come back on that same device (the table's), so the
+        caller is responsible for moving the result to wherever it combines it.
+        """
+        device = self.table.device
+        return self.table[band.to(device), lam_idx.to(device)]
 
     def update(self, band: torch.Tensor, lam_idx: torch.Tensor, returns: torch.Tensor) -> None:
         """EMA each bucket present toward the mean return observed for it.
 
         b <- b + alpha * (mean(returns in bucket) - b), only for buckets that
-        appear at least once; other buckets are left untouched.
+        appear at least once; other buckets are left untouched. band/lam_idx/
+        returns may live on any device; they are moved to self.table's device
+        internally.
         """
-        band = band.reshape(-1).long()
-        lam_idx = lam_idx.reshape(-1).long()
-        returns = returns.reshape(-1).float()
+        device = self.table.device
+        band = band.reshape(-1).long().to(device)
+        lam_idx = lam_idx.reshape(-1).long().to(device)
+        returns = returns.reshape(-1).float().to(device)
 
         flat_idx = band * self.n_lams + lam_idx
         n_buckets = self.n_bands * self.n_lams
 
-        sums = torch.zeros(n_buckets, dtype=returns.dtype)
-        counts = torch.zeros(n_buckets, dtype=returns.dtype)
+        sums = torch.zeros(n_buckets, dtype=returns.dtype, device=device)
+        counts = torch.zeros(n_buckets, dtype=returns.dtype, device=device)
         sums.scatter_add_(0, flat_idx, returns)
         counts.scatter_add_(0, flat_idx, torch.ones_like(returns))
 
         present = counts > 0
-        means = torch.zeros(n_buckets, dtype=returns.dtype)
+        means = torch.zeros(n_buckets, dtype=returns.dtype, device=device)
         means[present] = sums[present] / counts[present]
 
         flat_table = self.table.reshape(-1)

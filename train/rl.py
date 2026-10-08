@@ -64,6 +64,8 @@ def rl_loss(trace: RLTrace, baseline: BucketedBaseline, beta: float) -> tuple[to
     returns = returns_to_go(reward)
 
     # Broadcast lam_idx [n] to [n, T] to index the baseline per decision slot.
+    # baseline.value moves band/lam_idx to the baseline table's device internally
+    # (which may differ from the trace's device); move the result back here.
     lam_idx_bt = lam_idx[:, None].expand_as(band)
     baseline_values = baseline.value(band, lam_idx_bt).to(device)
 
@@ -119,7 +121,8 @@ def rl_update(model, trace: RLTrace, baseline: BucketedBaseline, opt: torch.opti
     lam_idx_bt = lam_idx[:, None].expand_as(band)
 
     if choice.any():
-        baseline.update(band[choice].cpu(), lam_idx_bt[choice].cpu(), returns[choice].detach().cpu())
+        # baseline.update moves these to the baseline table's device internally.
+        baseline.update(band[choice], lam_idx_bt[choice], returns[choice].detach())
 
     return {
         "loss": float(loss.detach()),

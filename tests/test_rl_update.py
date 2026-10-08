@@ -89,6 +89,10 @@ def test_single_choice_slot_gives_finite_loss():
     assert np.isfinite(parts["pg_loss"])
     assert np.isfinite(parts["complexity_mse"])
 
+    loss.backward()
+    assert torch.isfinite(trace.logp.grad).all()
+    assert torch.isfinite(trace.complexity.grad).all()
+
 
 def test_single_choice_slot_equal_advantages_also_finite():
     trace = _make_trace(n=2, T=2)
@@ -100,6 +104,62 @@ def test_single_choice_slot_equal_advantages_also_finite():
     loss, parts = rl_loss(trace, baseline, beta=0.01)
 
     assert torch.isfinite(loss)
+
+    loss.backward()
+    assert torch.isfinite(trace.logp.grad).all()
+    assert torch.isfinite(trace.complexity.grad).all()
+
+
+def _accelerator_device() -> str | None:
+    if torch.cuda.is_available():
+        return "cuda"
+    if torch.backends.mps.is_available():
+        return "mps"
+    return None
+
+
+@pytest.mark.skipif(_accelerator_device() is None, reason="no accelerator (cuda/mps) available")
+def test_rl_loss_on_accelerator_device():
+    # RLTrace in real rollouts keeps logp/entropy/complexity on the model's
+    # device (which may be an accelerator) while reward/band/band_target/masks/
+    # lam_idx stay on CPU (plan ruling). BucketedBaseline.table is always CPU
+    # (it's a small lookup table saved with the checkpoint). rl_loss must not
+    # crash when these devices differ, and rl_update must apply its baseline
+    # update against the resulting returns without a device mismatch either.
+    device = _accelerator_device()
+    trace = _make_trace(n=2, T=2, device=device)
+    trace.choice[:, 0] = True
+    trace.valid[:, 0] = True
+    trace.reward[:, 0] = torch.tensor([1.0, 3.0])
+    trace.band[:, 0] = torch.tensor([1, 2])
+    trace.lam_idx = torch.tensor([0, 1])
+
+    baseline = BucketedBaseline()
+    loss, parts = rl_loss(trace, baseline, beta=0.01)
+
+    assert loss.device.type == device
+    assert torch.isfinite(loss)
+    assert np.isfinite(parts["pg_loss"])
+
+    class _TinyAcceleratorPolicy(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.w = torch.nn.Parameter(torch.zeros(1, device=device))
+
+    policy = _TinyAcceleratorPolicy()
+    trace2 = _make_trace(n=2, T=2, device=device)
+    trace2.logp = (trace2.logp + policy.w).requires_grad_(True)
+    trace2.choice[:, 0] = True
+    trace2.valid[:, 0] = True
+    trace2.reward[:, 0] = torch.tensor([1.0, 3.0])
+    trace2.band[:, 0] = torch.tensor([1, 2])
+    trace2.lam_idx = torch.tensor([0, 1])
+
+    opt = torch.optim.AdamW(policy.parameters(), lr=0.1)
+    stats = rl_update(policy, trace2, baseline, opt, beta=0.01)
+
+    assert np.isfinite(stats["loss"])
+    assert baseline.table[1, 0] != 0.0 or baseline.table[2, 1] != 0.0
 
 
 def test_complexity_term_pulls_toward_band_target():
@@ -185,7 +245,8 @@ def test_positive_advantage_raises_logp():
     assert policy.theta.item() > before
 
 
-def test_policy_converges_on_easy_world():
+@pytest.mark.parametrize("seed", [0, 1, 2])
+def test_policy_converges_on_easy_world(seed):
     from tests.test_env import IDS
 
     table = make_table(n=120, seed=7)
@@ -208,21 +269,15 @@ def test_policy_converges_on_easy_world():
     sks = generate_skeletons(easy_table, list(easy_table.prompt_ids), n=32, seed=0, split="t")
     episodes = [Episode(sk, easy_table, IDS) for sk in sks]
 
-    torch.manual_seed(0)
+    torch.manual_seed(seed)
     model = Controller(CONFIGS["full"], torch.randn(120, 384), torch.rand(4, 6), n_types=2)
 
     cost_ref = load_cost_ref()
     baseline = BucketedBaseline()
     opt = torch.optim.AdamW(model.parameters(), lr=3e-3, weight_decay=0.01)
-    # Seed 2 chosen deliberately: Monte Carlo policy gradient on 32 episodes has
-    # real run-to-run variance at exactly 60 updates (checked seeds 0-2 x model
-    # seeds 0-2: most clear 0.9+ comfortably, a couple of (model_seed, rng_seed)
-    # combinations land in the 0.78-0.88 range instead). This seed is stable
-    # across repeated runs (deterministic given torch/numpy seeding) and
-    # reaches share=1.0, well clear of the 0.9 bar.
-    rng = np.random.default_rng(2)
+    rng = np.random.default_rng(seed)
 
-    n_updates = 60
+    n_updates = 120
 
     for update in range(n_updates):
         lam_idx = rng.integers(len(LAMS), size=len(episodes))
