@@ -153,7 +153,7 @@ class DecisionRecord:
 
 - **Control-row fairness.** `context_free` masks earlier steps' trace items, the budget token and the memory readout, but still sees the **current step's own round-1 result**. Escalating within a step is not workflow context; masking it would hand `full` a gain on plain random chains.
 - **Halt timing.** A `Strategy` is emitted per round. `model_id` comes from the forward pass before the round; `halt` is filled from a second forward pass on the post-round `TaskRep` (trace includes that round). `halt = "escalate"` is invalid in round `MAX_ROUNDS = 2`.
-- **Retry episodes.** The skeleton lists `n` prompts; the episode always has `n` steps. In a retry episode, if a step's final answer is wrong and the item is not already a retry, the next step is the same item (marked retried); otherwise the next listed prompt. Items are retried at most once.
+- **Retry episodes.** The skeleton lists `n` prompts; the episode always has `n` steps. In a retry episode, if the step's final round is flagged by the verifier (`verifier_ok` false) and the item is not already a retry, the next step is the same item (marked retried); otherwise the next listed prompt. Items are retried at most once. Deciding on the verifier, not on true correctness, keeps a returning prompt from revealing ground truth (D4).
 - **Step outcome.** A step's outcome is its last round's answer. Propagation uses the tier of the model that gave that final wrong answer.
 - **TTT surprise.** `surprise = value(obs) − W·key(obs)`. The gate rate is one scalar per decision. At an episode's first decision there is no outcome to store, so the memory update is skipped. Gradients flow through `W` across the whole episode.
 - **Sources (checked on the data).** Kept: MMLU (grouped), HellaSwag, ARC-Challenge, Winogrande, MBPP → 5 step types. Dropped: grade-school-math (0.25-step scores), MT-Bench (graded), small miscellaneous evals. Duplicate prompt texts (16) are removed before splitting.
@@ -171,7 +171,7 @@ Checked against the code and papers of HRM-Text (`models/baselines/hrm_nocarry_b
 - `z_L` starts from a **fixed buffer** (truncated normal, std 1), as in HRM, HRM-Text and TRM. `z_H` starts from `h = RMSNorm(mean(H tokens))`.
 - L-step: `z_L ← L(z_L + z_H + x)` with `x` injected every step (HRM/TRM; HRM-Text injects only through `z_H⁰`). H-step: `z_H ← H(z_H + z_L + h)`. Re-injecting `h` is our deviation: under truncated backprop it is the only path by which the task and budget encoders receive gradient.
 - Gradient horizon = HRM-Text staircase: `bp = 2 + ⌊min(1, step / (0.2·total)) · 3⌋` module calls, split `H_bp = min(2, bp − 1)`, `L_bp = bp − H_bp`; earlier calls run without grad. TRM shows a 1-step gradient is weak, so a run may start at `bp_min = 3`.
-- **EMA** of weights, decay 0.999 (TRM; HRM-Text uses 0.9999 at 1B scale). Validation and evaluation use the EMA weights.
+- **EMA** of weights with warm-up, decay = min(0.999, (1+t)/(10+t)) (0.999 as in TRM; the warm-up because our runs are ~1.6k steps). Validation and evaluation use the EMA weights.
 
 **Memory (`controller/memory.py`)**, TTT-Linear inner model with Titans-style forgetting, no momentum:
 

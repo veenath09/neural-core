@@ -112,7 +112,11 @@ class Episode:
         if s.done or s.rounds == 0:
             raise ValueError("no round has been played in this step")
         failed = not s.cur_correct
-        retry = self.skeleton.ep_type == "retry" and failed and not s.retried
+        # Retry on the verifier's flag, not true correctness: s.trace[-1] is this step's final
+        # round (rounds > 0 here), so using true correctness would leak noiseless ground truth
+        # to a returning prompt, bypassing the verifier noise (D4).
+        flagged = not s.trace[-1].verifier_ok
+        retry = self.skeleton.ep_type == "retry" and flagged and not s.retried
         step_index = s.step_index + 1
         return replace(s, step_index=step_index, slot=s.slot if retry else s.slot + 1, retried=retry,
                        rounds=0, cur_model=None, cur_correct=False,

@@ -66,6 +66,23 @@ def test_successful_step_is_not_retried():
     assert (s.slot, s.retried) == (1, False)
 
 
+def test_retry_decided_by_verifier_flag_not_true_correctness():
+    """D4: retry must be decided from the noisy verifier_ok, not true correctness, else a
+    returning prompt would reveal ground truth. flip_p=1.0 always flips verifier_ok."""
+    # Step is truly correct, but the (always-flipping) verifier flags it -> retried.
+    ep = episode("retry", [[1, 1, 1, 1], [1, 1, 1, 1], [1, 1, 1, 1]], flip_p=1.0)
+    s = ep.end_step(ep.play(ep.initial_state(), 0))
+    assert s.trace[-1].verifier_ok is False
+    assert (s.slot, s.retried) == (0, True)
+    # Step is truly wrong, but the (always-flipping) verifier says it's fine -> not retried.
+    ep = episode("retry", [[0, 0, 0, 0], [1, 1, 1, 1], [1, 1, 1, 1]], flip_p=1.0)
+    s = ep.end_step(ep.play(ep.initial_state(), 0))
+    assert s.trace[-1].verifier_ok is True
+    assert (s.slot, s.retried) == (1, False)
+    # n_correct still reflects true correctness, unaffected by the verifier flip.
+    assert s.n_correct == 0
+
+
 def test_escalation_must_be_strictly_more_expensive_and_replaces_answer():
     ep = episode("random", [[0, 0, 1, 1], [1, 1, 1, 1], [1, 1, 1, 1]])
     s = ep.play(ep.initial_state(), 1)
