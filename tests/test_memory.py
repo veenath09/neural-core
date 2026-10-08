@@ -67,12 +67,17 @@ def test_other_gates_carry_no_state(gate):
     assert rate.shape == (3,) and c.shape == (3, 0)
 
 
-def test_read_is_zero_when_empty_and_normalised_after_a_write():
+def test_read_is_zero_when_empty_and_rms_normalised_after_a_write():
+    torch.manual_seed(0)
     mem = EpisodeMemory(d=16)
     state = mem.init_state(2)
-    assert torch.allclose(mem.read(state, torch.randn(2, 16)), torch.zeros(2, 16))
+    z = torch.randn(2, 16)
+    assert torch.allclose(mem.read(state, z), torch.zeros(2, 16))
     new, _ = mem.write(state, torch.randn(2, 16), ON(2), torch.full((2,), 0.2))
-    assert torch.allclose(mem.read(new, torch.randn(2, 16)).pow(2).mean(-1), torch.ones(2), atol=1e-3)
+    raw = torch.bmm(new.W, F.normalize(mem.query(z), dim=-1).unsqueeze(-1)).squeeze(-1)
+    m = raw.pow(2).mean(-1)
+    assert (m > 0).all()
+    assert torch.allclose(mem.read(new, z).pow(2).mean(-1), m / (m + 1e-6), atol=1e-5)
 
 
 def test_select_and_merge_rows():
