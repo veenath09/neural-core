@@ -137,3 +137,10 @@ def test_verifier_flips_are_independent_across_models_rounds_steps_and_seeds():
     for name, pairs in [("models", models), ("rounds", rounds), ("steps", steps), ("seeds", seeds)]:
         both = np.mean([a and b for a, b in pairs])
         assert both == pytest.approx(0.15**2, abs=0.012), name
+
+
+def test_trace_items_record_step_and_prompt():
+    ep = episode("retry", [[0, 0, 0, 0], [1, 1, 1, 1], [1, 1, 1, 1]])
+    s = ep.end_step(ep.play(ep.initial_state(), 0))  # fails, so item p0 comes back
+    s = ep.play(s, 1)
+    assert [(i.step_index, i.step_emb_key) for i in s.trace] == [(0, "p0"), (1, "p0")]

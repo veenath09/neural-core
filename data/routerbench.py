@@ -28,7 +28,7 @@ POOL = (
     "gpt-4-1106-preview",
 )
 PRICE_SOURCE = "RouterBench 0-shot per-prompt total_cost"
-PRICE_DATE = "2024-03"
+PRICE_DATE = "not stated by RouterBench"
 
 
 @dataclass

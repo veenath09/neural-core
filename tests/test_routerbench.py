@@ -94,6 +94,7 @@ def test_model_cards_ordered_by_tier_with_capability():
     assert [c.tier for c in cards] == [0, 1, 2, 3]
     assert len(cards[0].capability) == 5 + 1
     assert cards[3].capability[1] > cards[0].capability[1]  # hellaswag accuracy rises with tier
+    assert cards[0].price_date == "not stated by RouterBench"
 
 
 def test_outcome_table_from_frame():

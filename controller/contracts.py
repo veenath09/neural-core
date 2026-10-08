@@ -40,6 +40,8 @@ class TraceItem:
     tokens_out: int
     escalated: bool
     output_emb_key: str | None  # cache key; None in the prototype
+    step_index: int | None = None  # episode step this round belongs to (D11)
+    step_emb_key: str | None = None  # prompt of that step, so a retried item is visible (D11)
 
 
 @dataclass

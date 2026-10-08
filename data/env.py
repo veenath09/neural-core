@@ -103,7 +103,8 @@ class Episode:
         correct = bool(self.succeeds(s)[m])
         item = TraceItem(model_id=self.model_ids[m], round=s.rounds + 1,
                          verifier_ok=self._verifier_ok(s, m, correct), cost_usd=cost, latency_ms=0.0,
-                         tokens_out=0, escalated=s.rounds == 1, output_emb_key=None)
+                         tokens_out=0, escalated=s.rounds == 1, output_emb_key=None,
+                         step_index=s.step_index, step_emb_key=self.skeleton.prompt_ids[s.slot])
         return replace(s, rounds=s.rounds + 1, cur_model=m, cur_correct=correct,
                        budget_left=s.budget_left - cost, spent=s.spent + cost, trace=s.trace + (item,))
 
