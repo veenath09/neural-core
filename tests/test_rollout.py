@@ -66,7 +66,8 @@ def test_no_affordable_stronger_model_means_stop():
         nn_bias = m.heads.halt.bias
         nn_bias.fill_(50.0)  # always wants to escalate
         out = rollout(m, [Episode(sk, table, IDS)], world, tau=0.0)  # tau 0: cheapest model each step
-    assert out.results[0].cost_usd <= sk.budget_usd
+    assert out.results[0].cost_usd == pytest.approx(float(table.cost[:3, 0].sum()))
+    assert out.results[0].quality == pytest.approx(float(table.correct[:3, 0].mean()))
 
 
 def test_record_logs_memory_writes_and_residuals():
