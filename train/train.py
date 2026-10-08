@@ -18,7 +18,7 @@ import numpy as np
 import torch
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR
-from torch.optim.swa_utils import AveragedModel, get_ema_multi_avg_fn
+from torch.optim.swa_utils import AveragedModel
 
 from controller.core import bp_schedule
 from controller.model import CONFIGS, Controller, n_parameters
@@ -30,6 +30,27 @@ from data.routerbench import SOURCES as BENCH_SOURCES
 from train.rollout import World, rollout
 
 EMA_DECAY = 0.999
+
+
+def ema_decay(t: int) -> float:
+    """Warm-up EMA decay: min(EMA_DECAY, (1+t)/(10+t)), t = updates already averaged (D11)."""
+    return min(EMA_DECAY, (1 + t) / (10 + t))
+
+
+def make_ema(model) -> AveragedModel:
+    """AveragedModel with warm-up EMA decay (plan D11).
+
+    torch's AveragedModel.update_parameters does the initial parameter copy on the call where
+    n_averaged == 0 (no avg_fn call that time), then calls avg_fn with num_averaged = n_averaged
+    (pre-increment) on every later call. So the first real averaging update after the initial
+    copy is called with num_averaged == 1, and that call must use t=0 -- hence t = num_averaged - 1.
+    """
+
+    def avg_fn(averaged_param, model_param, num_averaged):
+        t = int(num_averaged) - 1
+        return averaged_param + (model_param - averaged_param) * (1 - ema_decay(t))
+
+    return AveragedModel(model, avg_fn=avg_fn)
 
 
 @dataclass
@@ -88,7 +109,7 @@ def train(config: str, seed: int = 0, epochs: int = 20, batch_size: int = 256, l
     torch.manual_seed(seed)
     rng = np.random.default_rng(seed)
     model = Controller(CONFIGS[config], data.embeddings, data.cards, data.n_types)
-    ema = AveragedModel(model, multi_avg_fn=get_ema_multi_avg_fn(EMA_DECAY))
+    ema = make_ema(model)
     opt = AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
     train_sk = data.train[:max_train] if max_train else data.train
     val_sk = data.val[:max_val] if max_val else data.val

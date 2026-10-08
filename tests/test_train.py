@@ -1,13 +1,16 @@
 import json
 
 import numpy as np
+import pytest
 import torch
+from torch import nn
+from torch.optim.swa_utils import AveragedModel
 
 from data.episodes import generate_skeletons
 from tests.conftest import make_table
 from tests.test_env import IDS
 from train.rollout import World
-from train.train import Data, load_model, train
+from train.train import Data, ema_decay, load_model, make_ema, train
 
 
 def tiny_data():
@@ -35,3 +38,28 @@ def test_training_reduces_loss(tmp_path):
                     out_dir=tmp_path, log=lambda row: None)
     history = summary["history"]
     assert history[-1]["train_loss"] < history[0]["train_loss"]
+
+
+def test_ema_decay_has_warmup_and_caps_at_0_999():
+    assert ema_decay(0) == pytest.approx(0.1)
+    assert ema_decay(10) == pytest.approx(11 / 20)
+    assert ema_decay(10_000) == pytest.approx(0.999)
+
+
+def test_ema_update_uses_warmup_decay_not_fixed_0_999():
+    torch.manual_seed(0)
+    model = nn.Linear(2, 1, bias=False)
+    with torch.no_grad():
+        model.weight.copy_(torch.tensor([[1.0, 2.0]]))
+    ema = make_ema(model)
+    ema.update_parameters(model)  # initial copy (n_averaged 0 -> 1)
+    with torch.no_grad():
+        model.weight.copy_(torch.tensor([[3.0, 5.0]]))
+    ema.update_parameters(model)  # first real average: t=0, decay=0.1
+    expected = torch.tensor([[1.0, 2.0]]) + (torch.tensor([[3.0, 5.0]]) - torch.tensor([[1.0, 2.0]])) * (1 - 0.1)
+    assert torch.allclose(ema.module.weight, expected)
+    with torch.no_grad():
+        model.weight.copy_(torch.tensor([[7.0, 11.0]]))
+    ema.update_parameters(model)  # second real average: t=1, decay=2/11
+    expected2 = expected + (torch.tensor([[7.0, 11.0]]) - expected) * (1 - 2 / 11)
+    assert torch.allclose(ema.module.weight, expected2)
