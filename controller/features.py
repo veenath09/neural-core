@@ -44,6 +44,8 @@ class View:
 
 def view(ep: Episode, s: EnvState, phase: int, n_written: int, emb_index: dict[str, int],
          model_index: dict[str, int]) -> View:
+    if s.done:
+        raise ValueError("cannot build a view of a finished episode")
     sk, n = ep.skeleton, ep.n_steps
     total = sk.budget_usd
     budget = [s.budget_left / total, s.spent / total, s.step_index / n, 1.0 / n, _log_cost(s.budget_left), 0.0]

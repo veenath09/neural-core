@@ -1,5 +1,6 @@
 from dataclasses import replace
 
+import pytest
 import torch
 
 from controller.features import BUDGET_FEATS, CHOOSE, HALT, TRACE_FEATS, collate, collate_targets, target, view
@@ -58,3 +59,15 @@ def test_collate_shapes_and_types():
     assert b.write.dtype == torch.bool and b.task_row.dtype == torch.long and len(b) == 2
     succ, halt, band = collate_targets([target(ep, s, HALT)] * 3)
     assert succ.shape == (3, 4) and halt.shape == (3,) and band.shape == (3,)
+
+
+def test_view_rejects_finished_episode():
+    ep = episode("random", ROWS)
+    s = ep.initial_state()
+    # Play all 3 steps to finish the episode
+    s = ep.end_step(ep.play(s, 0))
+    s = ep.end_step(ep.play(s, 0))
+    s = ep.end_step(ep.play(s, 0))
+    assert s.done
+    with pytest.raises(ValueError, match="finished"):
+        view(ep, s, CHOOSE, 0, EMB, MIDX)
