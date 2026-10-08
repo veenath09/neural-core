@@ -14,6 +14,14 @@ Prototype of the C1 adaptive orchestration controller (J26-DS-359). Plan: `docs/
     .venv/bin/python -m data.episodes      # episode skeletons -> data/processed/episodes_{split}.parquet
     .venv/bin/python -m eval.baselines     # baseline numbers on test -> runs/baselines_test.csv
 
+## Training
+
+    .venv/bin/python -m eval.baselines val                    # reference numbers on validation
+    .venv/bin/python -m train.train --config memory_off --seed 0
+    .venv/bin/python -m eval.diagnostics runs/memory_off-s0  # residuals.png, memory_trace.csv
+
+Configs: `full`, `gate_off`, `gate_stateless`, `memory_off`, `context_free`.
+
 ## Tests
 
     .venv/bin/python -m pytest
