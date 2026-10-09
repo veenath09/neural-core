@@ -211,11 +211,22 @@ def train(config: str, seed: int = 0, epochs: int = 20, batch_size: int = 256, l
     return summary
 
 
-def load_model(run_dir: Path, data: Data | None = None) -> Controller:
+def load_model(run_dir: Path, data: Data | None = None, strict: bool = True) -> Controller:
+    """Load a checkpoint written by train() or train_rl(). With strict=False, an older
+    checkpoint missing heads.lam_adj.* (added for D13 lambda conditioning) still loads;
+    any other missing or unexpected key raises RuntimeError."""
     summary = json.loads((Path(run_dir) / "metrics.json").read_text())
     data = data or load_data(Path(summary.get("data_dir", DATA_DIR)))
     model = Controller(CONFIGS[summary["config"]], data.embeddings, data.cards, data.n_types)
-    model.load_state_dict(torch.load(Path(run_dir) / "model.pt", weights_only=True))
+    state_dict = torch.load(Path(run_dir) / "model.pt", weights_only=True)
+    if strict:
+        model.load_state_dict(state_dict, strict=True)
+    else:
+        result = model.load_state_dict(state_dict, strict=False)
+        bad_missing = [k for k in result.missing_keys if not k.startswith("heads.lam_adj.")]
+        if bad_missing or result.unexpected_keys:
+            raise RuntimeError(f"load_model: incompatible checkpoint (missing={bad_missing}, "
+                               f"unexpected={list(result.unexpected_keys)})")
     return model.eval()
 
 
