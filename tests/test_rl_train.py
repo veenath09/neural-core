@@ -2,11 +2,13 @@
 
 import json
 import math
+from pathlib import Path
 
 import numpy as np
 import pytest
 import torch
 
+import train.rl as rl_module
 from measurement.rl_reward import load_cost_ref
 from tests.test_train import tiny_data
 from train.baseline import BucketedBaseline
@@ -19,6 +21,15 @@ def test_safety_guard():
     guard = SafetyGuard(reference_quality=0.7, tol=0.05)
     assert guard.ok({0: 0.66, 1: 0.71}) is True
     assert guard.ok({0: 0.64}) is False
+
+
+def test_safety_guard_per_lambda_dict_reference():
+    guard = SafetyGuard(reference_quality={0: 0.6, 1: 0.9}, tol=0.05)
+    # lambda 0's own reference (0.6) is what it's checked against, not lambda 1's (0.9)
+    assert guard.ok({0: 0.56}) is True
+    assert guard.ok({1: 0.84}) is False
+    assert guard.ok({0: 0.56, 1: 0.86}) is True
+    assert guard.ok({0: 0.5, 1: 0.86}) is False
 
 
 def test_load_old_checkpoint_without_lam_adj(tmp_path):
@@ -45,6 +56,31 @@ def test_load_old_checkpoint_without_lam_adj(tmp_path):
         load_model(run, data, strict=False)
 
 
+def test_train_rl_reads_data_dir_from_init_dir(tmp_path, monkeypatch):
+    data = tiny_data()
+    pool_dir = tmp_path / "some_pool_dir"
+    pool_dir.mkdir()
+    data.data_dir = pool_dir  # tiny_data() has no real files on disk; only used as a cache dir here
+    train("full", seed=0, epochs=1, batch_size=32, data=data, out_dir=tmp_path, log=lambda row: None)
+    run = tmp_path / "full-s0"
+
+    metrics = json.loads((run / "metrics.json").read_text())
+    assert metrics["data_dir"] == str(data.data_dir)
+
+    captured = {}
+    real_load_data = rl_module.load_data
+
+    def fake_load_data(data_dir):
+        captured["data_dir"] = Path(data_dir)
+        return data  # reuse the same tiny_data() Data so the rest of the loop still runs
+
+    monkeypatch.setattr(rl_module, "load_data", fake_load_data)
+    train_rl("full", seed=0, init_dir=run, updates=1, batch_size=8, eval_every=1, data=None, log=lambda row: None)
+
+    assert captured["data_dir"] == Path(metrics["data_dir"])
+    rl_module.load_data = real_load_data  # not strictly needed (monkeypatch undoes it), but explicit
+
+
 def test_train_rl_smoke(tmp_path):
     data = tiny_data()
     train("full", seed=0, epochs=1, batch_size=32, data=data, out_dir=tmp_path, log=lambda row: None)
@@ -61,9 +97,19 @@ def test_train_rl_smoke(tmp_path):
     metrics = json.loads((rl_dir / "metrics.json").read_text())
     assert metrics["stage"] == "rl_sim"
     assert metrics["data_dir"] is not None and isinstance(metrics["data_dir"], str)
+    # No override given: the reference is measured per-lambda at update 0, so that check
+    # always passes by construction and best_update/best_mean_val_reward are set from it.
+    assert set(metrics["reference_quality"].keys()) == {str(i) for i in range(5)}
+    assert metrics["best_update"] is not None
+    assert math.isfinite(metrics["best_mean_val_reward"])
 
     loaded = load_model(rl_dir, data)  # must load strictly
     assert loaded is not None
+
+    # train_rl's return value also carries the live final state (not written to metrics.json),
+    # used by callers (and tests) that need to tell "restored to last_good" from "kept training".
+    assert set(result["final_model_state"].keys()) == set(loaded.state_dict().keys())
+    assert "table" in result["final_baseline_state"]
 
     def check_finite(x):
         if isinstance(x, dict):
@@ -84,6 +130,7 @@ def test_rollback_restores_weights_and_halves_lr(tmp_path):
     run = tmp_path / "full-s0"
 
     start_sd = {k: v.clone() for k, v in torch.load(run / "model.pt", weights_only=True).items()}
+    start_baseline = BucketedBaseline()  # zeros at the start, matching train_rl's own initial baseline
 
     rows = []
     result = train_rl("full", seed=0, init_dir=run, updates=4, batch_size=8, eval_every=2, data=data,
@@ -97,6 +144,15 @@ def test_rollback_restores_weights_and_halves_lr(tmp_path):
     for r in check_rows:
         assert "rollback" in r["alarms"]
 
+    # The checkpoint on disk is the supervised start (expected, since no check ever passed).
     final_sd = torch.load(run / "rl" / "model.pt", weights_only=True)
     for k in start_sd:
         assert torch.allclose(start_sd[k], final_sd[k]), f"{k} changed despite guard never passing"
+
+    # The *live* model/baseline at the end of training must also equal the supervised start:
+    # this is the part a deleted restore-on-rollback would break without the checkpoint test
+    # above catching it (the checkpoint is written once at the start regardless).
+    for k in start_sd:
+        assert torch.allclose(start_sd[k], result["final_model_state"][k]), \
+            f"live model {k} changed despite guard never passing"
+    assert torch.allclose(result["final_baseline_state"]["table"], start_baseline.table)
