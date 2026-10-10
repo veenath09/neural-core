@@ -75,6 +75,20 @@ class Controller(nn.Module):
     def init_memory(self, batch: int) -> MemoryState | None:
         return self.memory.init_state(batch) if self.memory is not None else None
 
+    def add_embeddings(self, vectors: torch.Tensor) -> list[int]:
+        """Append rows to the frozen embedding table for unseen live prompts; returns their indices."""
+        start = self.emb.shape[0]
+        vectors = vectors.to(dtype=self.emb.dtype, device=self.emb.device)
+        self.register_buffer("emb", torch.cat([self.emb, vectors], dim=0), persistent=False)
+        return list(range(start, start + vectors.shape[0]))
+
+    def set_cards(self, cards: torch.Tensor) -> None:
+        """Replace the pool's capability vectors; M (pool size) may grow, F (feature width) is fixed."""
+        if cards.shape[1] != self.cards.shape[1]:
+            raise ValueError(f"card feature width {cards.shape[1]} != existing {self.cards.shape[1]}")
+        cards = cards.to(dtype=self.cards.dtype, device=self.cards.device)
+        self.register_buffer("cards", cards, persistent=False)
+
     def forward(self, b: Batch, memory: MemoryState | None = None, bp_steps: int = 5,
                 record: bool = False, lam: torch.Tensor | None = None,
                 log_price: torch.Tensor | None = None) -> Output:

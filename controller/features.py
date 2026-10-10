@@ -12,7 +12,7 @@ from dataclasses import dataclass, fields
 
 import torch
 
-from controller.contracts import K_TRACE
+from controller.contracts import K_TRACE, TraceItem
 from data.env import Episode, EnvState
 from data.oracle import halt_label
 
@@ -47,15 +47,27 @@ def view(ep: Episode, s: EnvState, phase: int, n_written: int, emb_index: dict[s
     if s.done:
         raise ValueError("cannot build a view of a finished episode")
     sk, n = ep.skeleton, ep.n_steps
-    total = sk.budget_usd
-    budget = [s.budget_left / total, s.spent / total, s.step_index / n, 1.0 / n, _log_cost(s.budget_left), 0.0]
+    return build_view(task_row=emb_index[sk.prompt_ids[0]], step_row=emb_index[sk.prompt_ids[s.slot]],
+                      step_type=int(ep.table.step_type[ep.row(s)]), phase=phase, rounds=s.rounds,
+                      budget_total=sk.budget_usd, budget_left=s.budget_left, spent=s.spent,
+                      step_index=s.step_index, n_steps=n, trace=list(s.trace), n_written=n_written,
+                      emb_index=emb_index, model_index=model_index)
+
+
+def build_view(*, task_row: int, step_row: int, step_type: int, phase: int, rounds: int,
+               budget_total: float, budget_left: float, spent: float, step_index: int, n_steps: int,
+               trace: Sequence[TraceItem], n_written: int, emb_index: dict[str, int],
+               model_index: dict[str, int]) -> View:
+    n = n_steps
+    budget = [budget_left / budget_total, spent / budget_total, step_index / n, 1.0 / n,
+              _log_cost(budget_left), 0.0]
     rows, models, feats, present, earlier = [], [], [], [], []
-    for item in reversed(s.trace[-K_TRACE:]):  # newest first
-        same_step = item.step_index == s.step_index
+    for item in reversed(trace[-K_TRACE:]):  # newest first
+        same_step = item.step_index == step_index
         rows.append(emb_index[item.step_emb_key])
         models.append(model_index[item.model_id])
         feats.append([1.0 if item.verifier_ok else -1.0, float(item.escalated), float(item.round - 1),
-                      _log_cost(item.cost_usd), float(same_step), (s.step_index - item.step_index) / n, 1.0])
+                      _log_cost(item.cost_usd), float(same_step), (step_index - item.step_index) / n, 1.0])
         present.append(True)
         earlier.append(not same_step)
     while len(rows) < K_TRACE:
@@ -64,10 +76,9 @@ def view(ep: Episode, s: EnvState, phase: int, n_written: int, emb_index: dict[s
         feats.append([0.0] * TRACE_FEATS)
         present.append(False)
         earlier.append(False)
-    write = len(s.trace) > n_written
-    return View(task_row=emb_index[sk.prompt_ids[0]], step_row=emb_index[sk.prompt_ids[s.slot]],
-                step_type=int(ep.table.step_type[ep.row(s)]),
-                round=s.rounds + 1 if phase == CHOOSE else s.rounds, phase=phase, budget=budget,
+    write = len(trace) > n_written
+    return View(task_row=task_row, step_row=step_row, step_type=step_type,
+                round=rounds + 1 if phase == CHOOSE else rounds, phase=phase, budget=budget,
                 trace_row=rows, trace_model=models, trace_feats=feats, trace_present=present,
                 trace_earlier=earlier, write=write, write_dt=1.0 / n if write else 0.0)
 
