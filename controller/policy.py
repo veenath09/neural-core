@@ -16,6 +16,29 @@ def log_price(card_costs: np.ndarray, cost_ref: float) -> torch.Tensor:
     return torch.log(torch.as_tensor(card_costs, dtype=torch.float32) / cost_ref)
 
 
+def _masked_categorical(
+    policy_logits: torch.Tensor, allowed: torch.Tensor
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Shared by choose_step and score_choose: (masked logits, log-probs [B,M], entropy [B])."""
+    if not torch.any(allowed, dim=-1).all():
+        raise ValueError("choose_step: a row has no allowed model")
+
+    masked = policy_logits.masked_fill(~allowed, float("-inf"))
+    logp_all = F.log_softmax(masked, dim=-1)
+
+    # log_softmax of an all-but-one-allowed row is exactly -inf at the disallowed
+    # entries. Multiplying that by p=0 is 0*-inf=nan in the backward pass (the
+    # forward value is masked back to 0, but torch.where still differentiates both
+    # branches, so the nan would otherwise leak into the surviving entries' grad).
+    # Zeroing logp_all at disallowed entries *before* multiplying avoids ever
+    # forming that product.
+    safe_logp_all = torch.where(allowed, logp_all, torch.zeros_like(logp_all))
+    p_all = logp_all.exp()
+    terms = torch.where(allowed, -(p_all * safe_logp_all), torch.zeros_like(p_all))
+    entropy = terms.sum(dim=-1)
+    return masked, logp_all, entropy
+
+
 def choose_step(
     policy_logits: torch.Tensor,
     allowed: torch.Tensor,
@@ -29,11 +52,7 @@ def choose_step(
     logp [B], entropy [B]); logp/entropy keep the autograd graph back to policy_logits.
     Raises ValueError if any row has nothing allowed.
     """
-    if not torch.any(allowed, dim=-1).all():
-        raise ValueError("choose_step: a row has no allowed model")
-
-    masked = policy_logits.masked_fill(~allowed, float("-inf"))
-    logp_all = F.log_softmax(masked, dim=-1)
+    masked, logp_all, entropy = _masked_categorical(policy_logits, allowed)
 
     if mode == "sample":
         probs = logp_all.exp()
@@ -44,18 +63,52 @@ def choose_step(
         raise ValueError(f"choose_step: unknown mode {mode!r}")
 
     logp = logp_all.gather(1, model[:, None]).squeeze(1)
+    return model.to(torch.long), logp, entropy
 
-    # log_softmax of an all-but-one-allowed row is exactly -inf at the disallowed
-    # entries. Multiplying that by p=0 is 0*-inf=nan in the backward pass (the
-    # forward value is masked back to 0, but torch.where still differentiates both
-    # branches, so the nan would otherwise leak into the surviving entries' grad).
-    # Zeroing logp_all at disallowed entries *before* multiplying avoids ever
-    # forming that product.
-    safe_logp_all = torch.where(allowed, logp_all, torch.zeros_like(logp_all))
-    p_all = logp_all.exp()
-    terms = torch.where(allowed, -(p_all * safe_logp_all), torch.zeros_like(p_all))
-    entropy = terms.sum(dim=-1)
 
+def score_choose(
+    policy_logits: torch.Tensor, allowed: torch.Tensor, model: torch.Tensor
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """(logp [B], entropy [B]) of the GIVEN models [B] under choose_step's distribution.
+
+    Same math as choose_step; keeps the autograd graph (replay with grad). Raises
+    ValueError if a row has nothing allowed or a given model is not allowed.
+    """
+    model = torch.as_tensor(model, dtype=torch.long, device=policy_logits.device)
+    _, logp_all, entropy = _masked_categorical(policy_logits, allowed)
+    if not allowed.gather(1, model[:, None]).all():
+        raise ValueError("score_choose: a given model is not allowed")
+    logp = logp_all.gather(1, model[:, None]).squeeze(1)
+    return logp, entropy
+
+
+def _safe_options(options: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    # Rows with no option would make choose_step raise; give those rows a safe dummy
+    # mask (column 0 allowed) so choose_step never raises, and discard its result for
+    # them via torch.where on has_option.
+    has_option = torch.any(options, dim=-1)
+    dummy = torch.zeros_like(options)
+    dummy[:, 0] = True
+    return has_option, torch.where(has_option[:, None], options, dummy)
+
+
+def _halt_terms(x, escalate, has_option, m2, logp_m2, cat_entropy):
+    """Shared by halt_step and score_halt: combine the Bernoulli and categorical parts."""
+    log_sigma_x = F.logsigmoid(x)
+    log_sigma_neg_x = F.logsigmoid(-x)
+    bern_entropy = -(torch.sigmoid(x) * log_sigma_x + torch.sigmoid(-x) * log_sigma_neg_x)
+
+    escalate_logp = log_sigma_x + logp_m2
+    stop_logp = log_sigma_neg_x
+    logp_choice = torch.where(escalate, escalate_logp, stop_logp)
+    entropy_choice = bern_entropy + cat_entropy
+
+    model_choice = torch.where(escalate, m2, torch.full_like(m2, -1))
+
+    zeros = torch.zeros_like(logp_choice)
+    logp = torch.where(has_option, logp_choice, zeros)
+    entropy = torch.where(has_option, entropy_choice, zeros)
+    model = torch.where(has_option, model_choice, torch.full_like(model_choice, -1))
     return model.to(torch.long), logp, entropy
 
 
@@ -76,7 +129,7 @@ def halt_step(
     on stop, logp = logsigmoid(-x). entropy = H_Bernoulli(p) + H_Categorical(options).
     Returns (model [B] long, logp [B], entropy [B], has_choice [B] bool).
     """
-    has_option = torch.any(options, dim=-1)
+    has_option, safe_options = _safe_options(options)
     x = halt_policy_logit
 
     if mode == "sample":
@@ -87,28 +140,28 @@ def halt_step(
     else:
         raise ValueError(f"halt_step: unknown mode {mode!r}")
 
-    # Rows with no option would make choose_step raise; give those rows a safe dummy
-    # mask (column 0 allowed) so choose_step never raises, and discard its result for
-    # them below via torch.where on has_option.
-    dummy = torch.zeros_like(options)
-    dummy[:, 0] = True
-    safe_options = torch.where(has_option[:, None], options, dummy)
     m2, logp_m2, cat_entropy = choose_step(policy_logits, safe_options, mode=mode, gen=gen)
+    model, logp, entropy = _halt_terms(x, escalate, has_option, m2, logp_m2, cat_entropy)
+    return model, logp, entropy, has_option
 
-    log_sigma_x = F.logsigmoid(x)
-    log_sigma_neg_x = F.logsigmoid(-x)
-    bern_entropy = -(torch.sigmoid(x) * log_sigma_x + torch.sigmoid(-x) * log_sigma_neg_x)
 
-    escalate_logp = log_sigma_x + logp_m2
-    stop_logp = log_sigma_neg_x
-    logp_choice = torch.where(escalate, escalate_logp, stop_logp)
-    entropy_choice = bern_entropy + cat_entropy
-
-    model_choice = torch.where(escalate, m2, torch.full_like(m2, -1))
-
-    zeros = torch.zeros_like(logp_choice)
-    logp = torch.where(has_option, logp_choice, zeros)
-    entropy = torch.where(has_option, entropy_choice, zeros)
-    model = torch.where(has_option, model_choice, torch.full_like(model_choice, -1))
-
-    return model.to(torch.long), logp, entropy, has_option
+def score_halt(
+    halt_policy_logit: torch.Tensor,
+    policy_logits: torch.Tensor,
+    options: torch.Tensor,
+    model: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """(logp [B], entropy [B], has_choice [B]) of the GIVEN halt actions under halt_step's
+    distribution. model [B] is -1 for stop, else the escalation model (must be an option).
+    A row with no option is a forced stop (logp=0, entropy=0) whatever is given.
+    Same math as halt_step; keeps the autograd graph.
+    """
+    model = torch.as_tensor(model, dtype=torch.long, device=policy_logits.device)
+    has_option, safe_options = _safe_options(options)
+    escalate = (model >= 0) & has_option
+    # Stop rows still need a valid categorical index; its log-prob is discarded below.
+    first_option = safe_options.to(torch.long).argmax(dim=-1)
+    m2 = torch.where(escalate, model, first_option)
+    logp_m2, cat_entropy = score_choose(policy_logits, safe_options, m2)
+    _, logp, entropy = _halt_terms(halt_policy_logit, escalate, has_option, m2, logp_m2, cat_entropy)
+    return logp, entropy, has_option
