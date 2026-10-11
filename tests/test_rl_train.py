@@ -18,13 +18,13 @@ from train.train import load_model, train
 
 
 def test_safety_guard():
-    guard = SafetyGuard(reference_quality=0.7, tol=0.05)
+    guard = SafetyGuard(reference_reward=0.7, tol=0.05)
     assert guard.ok({0: 0.66, 1: 0.71}) is True
     assert guard.ok({0: 0.64}) is False
 
 
 def test_safety_guard_per_lambda_dict_reference():
-    guard = SafetyGuard(reference_quality={0: 0.6, 1: 0.9}, tol=0.05)
+    guard = SafetyGuard(reference_reward={0: 0.6, 1: 0.9}, tol=0.05)
     # lambda 0's own reference (0.6) is what it's checked against, not lambda 1's (0.9)
     assert guard.ok({0: 0.56}) is True
     assert guard.ok({1: 0.84}) is False
@@ -54,6 +54,49 @@ def test_load_old_checkpoint_without_lam_adj(tmp_path):
     torch.save(bad_sd, run / "model.pt")
     with pytest.raises(RuntimeError):
         load_model(run, data, strict=False)
+
+
+def test_guard_uses_reward_not_quality(tmp_path, monkeypatch):
+    data = tiny_data()
+    train("full", seed=0, epochs=1, batch_size=32, data=data, out_dir=tmp_path, log=lambda row: None)
+    run = tmp_path / "full-s0"
+
+    real_evaluate_rl = rl_module.evaluate_rl
+    calls = {"n": 0}
+
+    def fake_evaluate_rl(model, skeletons, world, lam_idx, cost_ref, batch_size=512):
+        out = real_evaluate_rl(model, skeletons, world, lam_idx, cost_ref, batch_size=batch_size)
+        if calls["n"] >= len(rl_module.LAMS):
+            # Quality far below the (measured) reference, reward far above it: must not roll back.
+            out = dict(out, quality=0.0, reward=10.0)
+        calls["n"] += 1
+        return out
+
+    monkeypatch.setattr(rl_module, "evaluate_rl", fake_evaluate_rl)
+    result = train_rl("full", seed=0, init_dir=run, updates=2, batch_size=8, eval_every=2, data=data,
+                       log=lambda row: None)
+    check_rows = [r for r in result["history"] if "val" in r]
+    assert len(check_rows) == 2  # update 0 (reference measurement) and update 2
+    assert "rollback" not in check_rows[-1]["alarms"], \
+        "low quality but high reward must not trigger a rollback"
+
+    calls["n"] = 0
+
+    def fake_evaluate_rl_high_quality_low_reward(model, skeletons, world, lam_idx, cost_ref, batch_size=512):
+        out = real_evaluate_rl(model, skeletons, world, lam_idx, cost_ref, batch_size=batch_size)
+        if calls["n"] >= len(rl_module.LAMS):
+            # Quality far above the reference, reward far below it: must roll back.
+            out = dict(out, quality=1.0, reward=-10.0)
+        calls["n"] += 1
+        return out
+
+    monkeypatch.setattr(rl_module, "evaluate_rl", fake_evaluate_rl_high_quality_low_reward)
+    result2 = train_rl("full", seed=0, init_dir=run, updates=2, batch_size=8, eval_every=2, data=data,
+                        log=lambda row: None)
+    check_rows2 = [r for r in result2["history"] if "val" in r]
+    assert len(check_rows2) == 2
+    assert "rollback" in check_rows2[-1]["alarms"], \
+        "high quality but low reward must trigger a rollback"
 
 
 def test_train_rl_reads_data_dir_from_init_dir(tmp_path, monkeypatch):
@@ -99,7 +142,8 @@ def test_train_rl_smoke(tmp_path):
     assert metrics["data_dir"] is not None and isinstance(metrics["data_dir"], str)
     # No override given: the reference is measured per-lambda at update 0, so that check
     # always passes by construction and best_update/best_mean_val_reward are set from it.
-    assert set(metrics["reference_quality"].keys()) == {str(i) for i in range(5)}
+    assert metrics["reference_metric"] == "reward"
+    assert set(metrics["reference_by_lam"].keys()) == {str(i) for i in range(5)}
     assert metrics["best_update"] is not None
     assert math.isfinite(metrics["best_mean_val_reward"])
 
@@ -134,7 +178,7 @@ def test_rollback_restores_weights_and_halves_lr(tmp_path):
 
     rows = []
     result = train_rl("full", seed=0, init_dir=run, updates=4, batch_size=8, eval_every=2, data=data,
-                       reference_quality=1.0, log=rows.append)
+                       reference_reward=1.0, log=rows.append)
 
     check_rows = [r for r in result["history"] if "val" in r]
     assert check_rows, "expected at least one check row"

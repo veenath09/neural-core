@@ -20,14 +20,18 @@ callers that only import from train.rl still get it.
 
 train_rl starts from a supervised checkpoint (init_dir), rolls out batches of
 episodes under the "sample" policy, applies rl_update, and every eval_every
-updates checks greedy "serve" val quality at each lambda against that
+updates checks greedy "serve" val reward at each lambda against that
 lambda's own reference (SafetyGuard): the supervised start's own serve-mode
-val quality at that lambda, measured once at update 0 (so the update-0 check
-always passes by construction, unless reference_quality is overridden). A
+val reward at that lambda, measured once at update 0 (so the update-0 check
+always passes by construction, unless reference_reward is overridden). A
 check that passes snapshots the weights and baseline as last_good and saves
 them if they give the best mean val reward so far; a check that fails
 restores last_good, rebuilds the optimizer at half the lr (dropping stale
 Adam moments from the rejected trajectory), and adds the alarm "rollback".
+
+Deviation (seed-0 pilot v2): the guard compares val reward, not quality,
+against the supervised start at each lambda, because high-lambda policies
+trade quality for cost by design.
 
     python -m train.rl --config full --seed 0 --init runs/routerbench/full-s0
 """
@@ -252,7 +256,7 @@ def evaluate_rl(model, skeletons: list[Skeleton], world: World, lam_idx: int, co
 
 def train_rl(config: str, seed: int, init_dir: Path, updates: int = 1000, batch_size: int = 256, lr: float = 1e-4,
             eval_every: int = 250, max_val: int | None = None, out_dir: Path | None = None, data: Data | None = None,
-            reference_quality: float | dict[int, float] | None = None, log=print) -> dict:
+            reference_reward: float | dict[int, float] | None = None, log=print) -> dict:
     init_dir = Path(init_dir)
     out_dir = Path(out_dir) if out_dir is not None else init_dir / "rl"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -298,11 +302,11 @@ def train_rl(config: str, seed: int, init_dir: Path, updates: int = 1000, batch_
         model.eval()
         val_by_lam = {lam_idx: measure_val(lam_idx) for lam_idx in range(len(LAMS))}
         model.train()
-        quality_by_lam = {lam_idx: v["quality"] for lam_idx, v in val_by_lam.items()}
+        reward_by_lam = {lam_idx: v["reward"] for lam_idx, v in val_by_lam.items()}
         mean_val_reward = float(np.mean([v["reward"] for v in val_by_lam.values()]))
         row = {"update": update, "val": val_by_lam, "mean_val_reward": mean_val_reward,
                "lr": opt.param_groups[0]["lr"], "alarms": []}
-        if guard.ok(quality_by_lam):
+        if guard.ok(reward_by_lam):
             last_good["model"] = copy.deepcopy(model.state_dict())
             last_good["baseline"] = copy.deepcopy(baseline.state_dict())
             if best_mean_val_reward is None or mean_val_reward > best_mean_val_reward:
@@ -318,20 +322,20 @@ def train_rl(config: str, seed: int, init_dir: Path, updates: int = 1000, batch_
             row["alarms"].append("rollback")
         return row
 
-    # The per-lambda reference is the supervised start's own serve-mode val quality at each
+    # The per-lambda reference is the supervised start's own serve-mode val reward at each
     # lambda, measured once here (before the guard exists, so run_check can't be reused for
-    # this first pass) -- unless reference_quality overrides it. With no override, update 0's
+    # this first pass) -- unless reference_reward overrides it. With no override, update 0's
     # check below always passes by construction (it's measuring against itself).
     model.eval()
-    measured_reference_by_lam = {lam_idx: measure_val(lam_idx)["quality"] for lam_idx in range(len(LAMS))}
+    measured_reference_by_lam = {lam_idx: measure_val(lam_idx)["reward"] for lam_idx in range(len(LAMS))}
     model.train()
-    guard = SafetyGuard(reference_quality if reference_quality is not None else measured_reference_by_lam, tol=0.05)
+    guard = SafetyGuard(reference_reward if reference_reward is not None else measured_reference_by_lam, tol=0.05)
     # reference_by_lam is what metrics.json records: the guard's actual per-lambda reference,
     # whether measured here or supplied as an override (a float override applies to every lambda).
-    if isinstance(guard.reference_quality, dict):
-        reference_by_lam = dict(guard.reference_quality)
+    if isinstance(guard.reference_reward, dict):
+        reference_by_lam = dict(guard.reference_reward)
     else:
-        reference_by_lam = {lam_idx: guard.reference_quality for lam_idx in range(len(LAMS))}
+        reference_by_lam = {lam_idx: guard.reference_reward for lam_idx in range(len(LAMS))}
 
     row0 = run_check(0)
     history.append(row0)
@@ -361,8 +365,8 @@ def train_rl(config: str, seed: int, init_dir: Path, updates: int = 1000, batch_
 
     summary = {"config": config, "seed": seed, "stage": "rl_sim", "init_dir": str(init_dir),
                "data_dir": str(data.data_dir or DATA_DIR), "lams": list(LAMS),
-               "cost_ref": cost_ref, "reference_quality": reference_by_lam, "best_update": best_update,
-               "best_mean_val_reward": best_mean_val_reward, "history": history,
+               "cost_ref": cost_ref, "reference_metric": "reward", "reference_by_lam": reference_by_lam,
+               "best_update": best_update, "best_mean_val_reward": best_mean_val_reward, "history": history,
                "final_model_state": model.state_dict(), "final_baseline_state": baseline.state_dict()}
     metrics_only = {k: v for k, v in summary.items() if k not in ("final_model_state", "final_baseline_state")}
     (out_dir / "metrics.json").write_text(json.dumps(metrics_only, indent=2))
