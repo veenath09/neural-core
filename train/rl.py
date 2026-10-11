@@ -3,6 +3,14 @@
 Loss = -mean(A.detach() * logp) over choice slots
        - beta * mean(entropy) over choice slots
        + COMPLEXITY_AUX * mean((complexity - band_target)**2) over valid slots
+       + ANCHOR * (ANCHOR_MODEL * mean(sup_model) over valid slots
+                   + ANCHOR_HALT * mean(sup_halt) over halt slots)   [anchor=True, Task 9]
+
+The anchor keeps the supervised model/halt BCE losses on during RL (plan D13
+deviation, recorded after the seed-0 pilot): without it, RL rewrote the
+lambda-independent success/halt logits and collapsed to cheap models at every
+lambda. rl_loss(..., anchor=False) drops the anchor term entirely (Part 2's
+online replay, which has no labels live, calls it this way).
 
 A = G - baseline[band, lam_idx], G = returns_to_go(reward), normalised over
 choice slots with population std ((A - mean) / (std + 1e-8)).
@@ -42,15 +50,26 @@ from data.routerbench import DATA_DIR
 from measurement.rl_reward import LAMS, episode_reward, load_cost_ref  # re-exported; do not duplicate
 from measurement.scorer import CompositeScorer
 from train.baseline import BucketedBaseline
-from train.rollout import RLTrace, World, rollout
+from train.rollout import LOSS_WEIGHTS, RLTrace, World, rollout
 from train.safety import SafetyGuard
 from train.train import Data, load_data, load_model, make_episodes
 
 COMPLEXITY_AUX = 0.2
 LOG_EVERY = 25
 
+# Supervised anchor during simulator RL (plan D13 deviation, Task 9, seed-0 pilot):
+# without it, RL rewrote the lambda-independent success/halt logits and collapsed
+# to cheap models at every lambda. ANCHOR_MODEL/ANCHOR_HALT reuse the supervised
+# weights (train/rollout.py:LOSS_WEIGHTS) rather than re-typing them.
+ANCHOR = 1.0
+ANCHOR_MODEL = LOSS_WEIGHTS["model"]
+ANCHOR_HALT = LOSS_WEIGHTS["halt"]
+
 __all__ = [
     "COMPLEXITY_AUX",
+    "ANCHOR",
+    "ANCHOR_MODEL",
+    "ANCHOR_HALT",
     "load_cost_ref",
     "returns_to_go",
     "entropy_beta",
@@ -76,7 +95,9 @@ def entropy_beta(update: int, total: int, start: float = 0.01, end: float = 0.00
     return start + (end - start) * frac
 
 
-def rl_loss(trace: RLTrace, baseline: BucketedBaseline, beta: float) -> tuple[torch.Tensor, dict]:
+def rl_loss(
+    trace: RLTrace, baseline: BucketedBaseline, beta: float, anchor: bool = True
+) -> tuple[torch.Tensor, dict]:
     device = trace.logp.device
 
     logp = trace.logp
@@ -118,22 +139,42 @@ def rl_loss(trace: RLTrace, baseline: BucketedBaseline, beta: float) -> tuple[to
     else:
         complexity_mse = torch.zeros((), device=device)
 
-    loss = pg_loss + entropy_term + COMPLEXITY_AUX * complexity_mse
+    anchor_term = torch.zeros((), device=device)
+
+    if anchor:
+        sup_model = trace.sup_model.to(device)
+        sup_halt = trace.sup_halt.to(device)
+        halt_slot = trace.halt_slot.to(device)
+
+        mean_sup_model = sup_model[valid].mean() if valid.any() else torch.zeros((), device=device)
+        mean_sup_halt = sup_halt[halt_slot].mean() if halt_slot.any() else torch.zeros((), device=device)
+
+        anchor_term = ANCHOR * (ANCHOR_MODEL * mean_sup_model + ANCHOR_HALT * mean_sup_halt)
+
+    loss = pg_loss + entropy_term + COMPLEXITY_AUX * complexity_mse + anchor_term
 
     parts = {
         "pg_loss": float(pg_loss.detach()),
         "complexity_mse": float(complexity_mse.detach()),
         "entropy": float(entropy[choice].mean().detach()) if choice.any() else 0.0,
         "episode_return": float(returns[:, 0].mean().detach()) if returns.shape[1] > 0 else 0.0,
+        "anchor": float(anchor_term.detach()),
     }
 
     return loss, parts
 
 
-def rl_update(model, trace: RLTrace, baseline: BucketedBaseline, opt: torch.optim.Optimizer, beta: float) -> dict:
+def rl_update(
+    model,
+    trace: RLTrace,
+    baseline: BucketedBaseline,
+    opt: torch.optim.Optimizer,
+    beta: float,
+    anchor: bool = True,
+) -> dict:
     device = trace.logp.device
 
-    loss, parts = rl_loss(trace, baseline, beta)
+    loss, parts = rl_loss(trace, baseline, beta, anchor=anchor)
 
     opt.zero_grad()
     loss.backward()
@@ -158,6 +199,7 @@ def rl_update(model, trace: RLTrace, baseline: BucketedBaseline, opt: torch.opti
         "complexity_mse": parts["complexity_mse"],
         "episode_return": parts["episode_return"],
         "entropy": parts["entropy"],
+        "anchor": parts["anchor"],
         "grad_norm": float(grad_norm),
     }
 
@@ -307,8 +349,8 @@ def train_rl(config: str, seed: int, init_dir: Path, updates: int = 1000, batch_
 
         if update % LOG_EVERY == 0:
             row = {"update": update, "train_return": step["episode_return"], "pg_loss": step["pg_loss"],
-                   "complexity_mse": step["complexity_mse"], "entropy": step["entropy"], "beta": beta,
-                   "lr": opt.param_groups[0]["lr"], "grad_norm": step["grad_norm"]}
+                   "complexity_mse": step["complexity_mse"], "entropy": step["entropy"], "anchor": step["anchor"],
+                   "beta": beta, "lr": opt.param_groups[0]["lr"], "grad_norm": step["grad_norm"]}
             history.append(row)
             log(row)
 

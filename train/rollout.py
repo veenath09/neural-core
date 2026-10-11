@@ -56,6 +56,17 @@ class RLTrace:
     indexes LAMS. choice [n,T] marks slots that counted as a policy choice (CHOOSE,
     and HALT escalate/stop when an option existed); valid [n,T] marks real (non-pad)
     decision slots. Padding is 0 / False everywhere.
+
+    sup_model [n,T] keeps the autograd graph (plan D13 deviation, Task 9): per decision,
+    F.binary_cross_entropy_with_logits(model_logits, succeeds, reduction="none").mean(-1)
+    where succeeds = features.target(...).succeeds at the decision's pre-action state --
+    the same targets supervised training uses. sup_halt [n,T] keeps the autograd graph:
+    at HALT decisions, F.binary_cross_entropy_with_logits(halt_logit, halt_label) with
+    halt_label = features.target(ep, s, HALT).halt; 0 at CHOOSE. halt_slot [n,T] bool
+    marks valid HALT decisions (halt_slot is a subset of valid). These anchor the
+    lambda-independent success/halt heads to their supervised labels during RL
+    (train/rl.py:rl_loss, keyword anchor=True); traces built without labels (Part 2's
+    online replay) may leave sup_model/sup_halt all zero and pass anchor=False.
     """
 
     logp: torch.Tensor
@@ -67,6 +78,21 @@ class RLTrace:
     lam_idx: torch.Tensor
     choice: torch.Tensor
     valid: torch.Tensor
+    sup_model: torch.Tensor | None = None
+    sup_halt: torch.Tensor | None = None
+    halt_slot: torch.Tensor | None = None
+
+    def __post_init__(self) -> None:
+        # Traces built without labels (hand-made test traces predating Task 9,
+        # or Part 2's online replay) may omit sup_model/sup_halt/halt_slot;
+        # default them to all-zero/False so rl_loss(..., anchor=False) -- or an
+        # anchor computed over an empty mask -- works unmodified.
+        if self.sup_model is None:
+            self.sup_model = torch.zeros_like(self.valid, dtype=torch.float32)
+        if self.sup_halt is None:
+            self.sup_halt = torch.zeros_like(self.valid, dtype=torch.float32)
+        if self.halt_slot is None:
+            self.halt_slot = torch.zeros_like(self.valid, dtype=torch.bool)
 
 
 @dataclass
@@ -153,6 +179,9 @@ def rollout(
     rl_band: list[list[int]] = [[] for _ in range(n)]
     rl_band_target: list[list[float]] = [[] for _ in range(n)]
     rl_choice: list[list[bool]] = [[] for _ in range(n)]
+    rl_sup_model: list[list[torch.Tensor]] = [[] for _ in range(n)]
+    rl_sup_halt: list[list[torch.Tensor]] = [[] for _ in range(n)]
+    rl_halt_slot: list[list[bool]] = [[] for _ in range(n)]
 
     while True:
         for i, ep in enumerate(episodes):
@@ -352,10 +381,45 @@ def rollout(
                 .to(torch.long)
             )
 
-            band_targets = [
-                target(episodes[i], pre_states[j], ph).band
+            rl_targets = [
+                target(episodes[i], pre_states[j], ph)
                 for j, (i, ph) in enumerate(zip(active, phases))
             ]
+
+            band_targets = [t.band for t in rl_targets]
+
+            succ_t = torch.tensor(
+                [t.succeeds for t in rl_targets],
+                dtype=torch.float32,
+                device=device,
+            )
+
+            sup_model_vals = F.binary_cross_entropy_with_logits(
+                out.model_logits,
+                succ_t,
+                reduction="none",
+            ).mean(-1)
+
+            is_halt_slot = torch.tensor(
+                [ph == HALT for ph in phases],
+                device=device,
+            )
+
+            halt_t = torch.tensor(
+                [t.halt for t in rl_targets],
+                dtype=torch.float32,
+                device=device,
+            )
+
+            sup_halt_vals = torch.where(
+                is_halt_slot,
+                F.binary_cross_entropy_with_logits(
+                    out.halt_logit,
+                    halt_t,
+                    reduction="none",
+                ),
+                torch.zeros(len(active), device=device),
+            )
 
         for j, (i, ph, v) in enumerate(
             zip(active, phases, views)
@@ -370,6 +434,9 @@ def rollout(
                 rl_complexity[i].append(complexity_vals[j])
                 rl_band[i].append(int(band_vals[j]))
                 rl_band_target[i].append(float(band_targets[j]))
+                rl_sup_model[i].append(sup_model_vals[j])
+                rl_sup_halt[i].append(sup_halt_vals[j])
+                rl_halt_slot[i].append(ph == HALT)
 
             if ph == CHOOSE:
                 if rl_mode:
@@ -574,6 +641,9 @@ def rollout(
         band_target = torch.zeros(n, T, dtype=torch.float32)
         choice = torch.zeros(n, T, dtype=torch.bool)
         valid = torch.zeros(n, T, dtype=torch.bool)
+        sup_model = torch.zeros(n, T, device=device)
+        sup_halt = torch.zeros(n, T, device=device)
+        halt_slot = torch.zeros(n, T, dtype=torch.bool)
 
         for i in range(n):
             t = len(rl_logp[i])
@@ -589,6 +659,9 @@ def rollout(
             band_target[i, :t] = torch.tensor(rl_band_target[i], dtype=torch.float32)
             choice[i, :t] = torch.tensor(rl_choice[i], dtype=torch.bool)
             valid[i, :t] = True
+            sup_model[i, :t] = torch.stack(rl_sup_model[i])
+            sup_halt[i, :t] = torch.stack(rl_sup_halt[i])
+            halt_slot[i, :t] = torch.tensor(rl_halt_slot[i], dtype=torch.bool)
 
         rl_trace = RLTrace(
             logp=logp,
@@ -600,6 +673,9 @@ def rollout(
             lam_idx=torch.as_tensor(lam_idx, dtype=torch.long),
             choice=choice,
             valid=valid,
+            sup_model=sup_model,
+            sup_halt=sup_halt,
+            halt_slot=halt_slot,
         )
 
     return RolloutOutput(
