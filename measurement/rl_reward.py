@@ -72,6 +72,42 @@ def step_reward(
     return d_quality / n_steps - lam * d_spent / (n_steps * cost_ref)
 
 
+def episode_log_rewards(
+    round_costs: list[float],
+    step_quality: list[float],
+    decision_step: list[int],
+    lam: float,
+    cost_ref: float,
+) -> list[float]:
+    """Per-decision reward across a flat list of an episode's decisions.
+
+    round_costs[t] is the cost of the call decision t triggered (0.0 for a
+    stop); decision_step[t] is the step index of decision t. Each decision
+    gets -lam * (its round's cost) / (n * cost_ref) via step_reward; each
+    step's LAST decision also gets +step_quality[step] / n, with
+    n = len(step_quality).
+
+    The sum equals episode_reward(scorer, mean(step_quality),
+    sum(round_costs), n, lam): the quality terms sum to mean(step_quality)
+    because each step contributes its quality exactly once (on its last
+    decision), and the cost terms sum to -lam * sum(round_costs) /
+    (n * cost_ref) by linearity of step_reward's cost term.
+    """
+
+    n = len(step_quality)
+    last_decision_of_step: dict[int, int] = {}
+    for t, step in enumerate(decision_step):
+        last_decision_of_step[step] = t
+
+    rewards = []
+    for t, (cost, step) in enumerate(zip(round_costs, decision_step)):
+        r = step_reward(d_quality=0.0, d_spent=cost, n_steps=n, lam=lam, cost_ref=cost_ref)
+        if last_decision_of_step.get(step) == t:
+            r += step_quality[step] / n
+        rewards.append(r)
+    return rewards
+
+
 def lam_oracle(
     ep: Episode,
     lam: float,
