@@ -33,6 +33,12 @@ Deviation (seed-0 pilot v2): the guard compares val reward, not quality,
 against the supervised start at each lambda, because high-lambda policies
 trade quality for cost by design.
 
+Deviation (seed-0 pilot v3): with calibrate_init, the lambda-adjustment layer's
+starting price weight and halt offset are grid-searched per lambda on training
+episodes and fitted as linear in ln lambda before update 0 (train/policy_init.py),
+because the default start sits at the expensive corner and a search over those two
+numbers alone beat both the supervised tau rule and 1,000 RL updates.
+
     python -m train.rl --config full --seed 0 --init runs/routerbench/full-s0
 """
 
@@ -256,7 +262,8 @@ def evaluate_rl(model, skeletons: list[Skeleton], world: World, lam_idx: int, co
 
 def train_rl(config: str, seed: int, init_dir: Path, updates: int = 1000, batch_size: int = 256, lr: float = 1e-4,
             eval_every: int = 250, max_val: int | None = None, out_dir: Path | None = None, data: Data | None = None,
-            reference_reward: float | dict[int, float] | None = None, log=print) -> dict:
+            reference_reward: float | dict[int, float] | None = None, log=print,
+            calibrate_init: bool = False, calibrate_episodes: int = 1000) -> dict:
     init_dir = Path(init_dir)
     out_dir = Path(out_dir) if out_dir is not None else init_dir / "rl"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -327,6 +334,16 @@ def train_rl(config: str, seed: int, init_dir: Path, updates: int = 1000, batch_
     # this first pass) -- unless reference_reward overrides it. With no override, update 0's
     # check below always passes by construction (it's measuring against itself).
     model.eval()
+    init_report = None
+    if calibrate_init:
+        from train.policy_init import calibrate_policy_init  # local: policy_init imports evaluate_rl from here
+
+        init_report = calibrate_policy_init(model, train_sk[:calibrate_episodes], data.world, cost_ref)
+        model.train()
+        last_good = {"model": copy.deepcopy(model.state_dict()), "baseline": copy.deepcopy(baseline.state_dict())}
+        save_best(last_good["model"], last_good["baseline"])
+        log({"calibrated_init": {k: init_report[k] for k in ("kept_default", "default_mean_reward", "mean_reward", "fit",
+                                                               "fitted_price_weight")}})
     measured_reference_by_lam = {lam_idx: measure_val(lam_idx)["reward"] for lam_idx in range(len(LAMS))}
     model.train()
     guard = SafetyGuard(reference_reward if reference_reward is not None else measured_reference_by_lam, tol=0.05)
@@ -366,6 +383,7 @@ def train_rl(config: str, seed: int, init_dir: Path, updates: int = 1000, batch_
     summary = {"config": config, "seed": seed, "stage": "rl_sim", "init_dir": str(init_dir),
                "data_dir": str(data.data_dir or DATA_DIR), "lams": list(LAMS),
                "cost_ref": cost_ref, "reference_metric": "reward", "reference_by_lam": reference_by_lam,
+               "calibrated_init": init_report,
                "best_update": best_update, "best_mean_val_reward": best_mean_val_reward, "history": history,
                "final_model_state": model.state_dict(), "final_baseline_state": baseline.state_dict()}
     metrics_only = {k: v for k, v in summary.items() if k not in ("final_model_state", "final_baseline_state")}
@@ -381,9 +399,11 @@ def main() -> None:
     parser.add_argument("--updates", type=int, default=1000)
     parser.add_argument("--batch-size", type=int, default=256)
     parser.add_argument("--max-val", type=int)
+    parser.add_argument("--no-calibrate", action="store_true", help="start from the default D13 init (pilot v1/v2)")
+    parser.add_argument("--out", type=Path, help="output dir (default: <init>/rl)")
     a = parser.parse_args()
     train_rl(a.config, a.seed, a.init_dir, updates=a.updates, batch_size=a.batch_size, max_val=a.max_val,
-            log=lambda row: print(json.dumps(row), flush=True))
+            out_dir=a.out, calibrate_init=not a.no_calibrate, log=lambda row: print(json.dumps(row), flush=True))
 
 
 if __name__ == "__main__":
