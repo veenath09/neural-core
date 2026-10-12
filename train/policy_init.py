@@ -11,6 +11,11 @@ halt offset h by serve-mode reward on the given skeletons (training episodes, so
 model selection stay untouched), fits raw0 and raw1 as linear functions of ln lam, and writes them
 into lam_adj (weights on z_H and c stay zero). If the fitted start is worse than the default on
 those skeletons, the default is kept.
+
+Pilot v4: it then sets the policy sharpness k (controller/heads.py) to the smallest value in
+grid_k whose mean sample-mode reward is within SHARPNESS_TOL of the serve-mode reward, so RL
+learns from behaviour close to what it is judged on while keeping as much exploration as
+possible. k does not change serve decisions, so the fitted start above is unaffected.
 """
 
 from __future__ import annotations
@@ -20,11 +25,16 @@ import math
 import numpy as np
 import torch
 
-from measurement.rl_reward import LAMS
+from measurement.rl_reward import LAMS, episode_reward
+from measurement.scorer import CompositeScorer
 from train.rl import evaluate_rl
+from train.rollout import rollout
+from train.train import make_episodes
 
 GRID_W = (0.05, 0.1, 0.2, 0.3, 0.45, 0.6, 0.8, 1.0, 1.5, 2.0, 3.0)
 GRID_H = (0.0, 1.0, 2.0, 3.0)
+GRID_K = (1.0, 2.0, 3.0, 5.0, 10.0)
+SHARPNESS_TOL = 0.02
 
 
 def _softplus_inv(v: float) -> float:
@@ -42,12 +52,41 @@ def set_policy_init(model, price: tuple[float, float], halt: tuple[float, float]
         lin.weight[1, log_lam_col] = halt[1]
 
 
+def sample_reward(model, skeletons, world, cost_ref, lam_idx: int, seed: int = 0, batch_size: int = 512) -> float:
+    """Mean episode reward of the sample-mode policy at one lambda (no gradient)."""
+    model.eval()
+    scorer = CompositeScorer.from_yaml("conf/score.yaml")
+    rng, rewards = np.random.default_rng(seed), []
+    with torch.no_grad():
+        for start in range(0, len(skeletons), batch_size):
+            eps = make_episodes(skeletons[start:start + batch_size], world)
+            out = rollout(model, eps, world, policy="sample", rng=rng, lam_idx=np.full(len(eps), lam_idx),
+                          cost_ref=cost_ref)
+            rewards += [episode_reward(scorer, r.quality, r.cost_usd, e.n_steps, LAMS[lam_idx])
+                        for r, e in zip(out.results, eps)]
+    return float(np.mean(rewards))
+
+
+def calibrate_sharpness(model, skeletons, world, cost_ref, serve: dict[int, float], lams=LAMS, grid_k=GRID_K,
+                        tol: float = SHARPNESS_TOL) -> tuple[float, dict[str, float]]:
+    """Smallest k in grid_k with mean(serve - sample reward) <= tol (else the largest k); sets it."""
+    gaps = {}
+    for k in sorted(grid_k):
+        with torch.no_grad():
+            model.heads.log_sharpness.fill_(math.log(k))
+        gaps[str(k)] = float(np.mean([serve[i] - sample_reward(model, skeletons, world, cost_ref, i)
+                                      for i in range(len(lams))]))
+        if gaps[str(k)] <= tol:
+            return k, gaps
+    return float(max(grid_k)), gaps
+
+
 def _rewards(model, skeletons, world, cost_ref, lams) -> dict[int, dict]:
     return {i: evaluate_rl(model, skeletons, world, i, cost_ref) for i in range(len(lams))}
 
 
 def calibrate_policy_init(model, skeletons, world, cost_ref: float, lams=LAMS, grid_w=GRID_W,
-                          grid_h=GRID_H) -> dict:
+                          grid_h=GRID_H, grid_k=GRID_K) -> dict:
     lin = model.heads.lam_adj
     default_state = {k: v.clone() for k, v in lin.state_dict().items()}
     default = _rewards(model, skeletons, world, cost_ref, lams)
@@ -75,6 +114,8 @@ def calibrate_policy_init(model, skeletons, world, cost_ref: float, lams=LAMS, g
     if kept_default:
         lin.load_state_dict(default_state)
     final = default if kept_default else fitted
+    k, gaps = calibrate_sharpness(model, skeletons, world, cost_ref, {i: final[i]["reward"] for i in final}, lams,
+                                  grid_k)
     raw0 = lambda lam: float(lin.bias[0] + lin.weight[0, lin.in_features - 2] * math.log(lam))  # noqa: E731
     return {
         "kept_default": kept_default,
@@ -85,4 +126,6 @@ def calibrate_policy_init(model, skeletons, world, cost_ref: float, lams=LAMS, g
         "per_lam": {i: {"reward": final[i]["reward"], "quality": final[i]["quality"], "cost_usd": final[i]["cost_usd"]}
                     for i in range(len(lams))},
         "fitted_price_weight": [lam * math.log1p(math.exp(raw0(lam))) for lam in lams],
+        "sharpness": k,
+        "sharpness_gap": gaps,
     }
