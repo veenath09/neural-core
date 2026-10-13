@@ -53,7 +53,8 @@ class EpisodeLog:
     cost_usd: float
     n_steps: int
     policy_version: int
-    used: list[tuple[str, int, float]] = field(default_factory=list)  # (model_id, step_type, round quality)
+    # (model_id, step_type, round quality, round cost): PoolState.record updates cards and costs from these
+    used: list[tuple[str, int, float, float]] = field(default_factory=list)
 
 
 def _episode_id(env: StepEnvironment) -> str:
@@ -78,7 +79,7 @@ def run_episode(session: ControllerSession, env: StepEnvironment, lam_idx: int, 
     round_costs: list[float] = []  # one per decision: the call it triggered
     decision_step: list[int] = []
     step_quality: dict[int, float] = {}
-    used: list[tuple[str, int, float]] = []
+    used: list[tuple[str, int, float, float]] = []
     step = 0
     while (spec := env.current_step()) is not None:
         first = session.decide(spec.step_id, spec.step_key, spec.step_text, spec.step_type, bonus_fn())
@@ -88,7 +89,7 @@ def run_episode(session: ControllerSession, env: StepEnvironment, lam_idx: int, 
         if out.trace_item is None:  # unaffordable round 1: the episode ends, this step scores 0
             step_quality[step] = 0.0
             break
-        used.append((first.model_id, spec.step_type, out.quality))
+        used.append((first.model_id, spec.step_type, out.quality, out.cost_usd))
         quality = out.quality
         second = session.after_round(out.trace_item, bonus_fn())  # HALT decision
         decision_step.append(step)
@@ -100,7 +101,7 @@ def run_episode(session: ControllerSession, env: StepEnvironment, lam_idx: int, 
             if out2.trace_item is None:  # unaffordable escalation: the episode ends, this step scores 0
                 step_quality[step] = 0.0
                 break
-            used.append((second.model_id, spec.step_type, out2.quality))
+            used.append((second.model_id, spec.step_type, out2.quality, out2.cost_usd))
             session.after_round(out2.trace_item, bonus_fn())  # round 2: recorded, no decision
             quality = out2.quality
         step_quality[step] = quality
@@ -144,6 +145,7 @@ def replay(model, logs: Sequence[EpisodeLog], log_price_fn: Callable[[int], torc
     entropy = [[None] * T for _ in range(n)]
     complexity = [[None] * T for _ in range(n)]
     memory = model.init_memory(n)
+    full_cards = model.cards  # the current pool; older decisions saw only its first pool_size rows
     lam_all = torch.tensor([LAMS[log.lam_idx] for log in logs], dtype=torch.float32, device=device)
 
     for t in range(T):
@@ -154,8 +156,12 @@ def replay(model, logs: Sequence[EpisodeLog], log_price_fn: Callable[[int], torc
         for pool_size, rows in by_pool.items():  # one forward per pool size (the pool can grow mid-run)
             idx = torch.tensor(rows, device=device)
             ds = [logs[i].decisions[t] for i in rows]
+            if pool_size != full_cards.shape[0]:
+                model.set_cards(full_cards[:pool_size])
             out = model(collate([d.view for d in ds], device), memory.select(idx) if memory is not None else None,
                         bp_steps=bp_steps, lam=lam_all[idx], log_price=log_price_fn(pool_size).to(device))
+            if pool_size != full_cards.shape[0]:
+                model.set_cards(full_cards)
             if memory is not None:
                 memory = memory.merge(idx, out.memory)
             bonus = torch.tensor([d.bonus for d in ds], dtype=torch.float32, device=device)
@@ -358,12 +364,24 @@ class OnlineLearner:
         return ["live_reward_drop"] if mean < self._reward_ref - self.cfg.canary_tol else []
 
 
-def make_canary(skeletons, world_fn: Callable[[], object], cost_ref: float) -> Callable:
-    """Serve-mode val quality at every lambda index on a fixed set of simulator skeletons."""
+def make_canary(skeletons, world_fn: Callable[[], object], cost_ref: float,
+                cards_fn: Callable[[], torch.Tensor] | None = None) -> Callable:
+    """Serve-mode val quality at every lambda index on a fixed set of simulator skeletons.
+
+    world_fn rebuilds the simulator world from the non-retired models that have simulator outcomes
+    (PoolState.sim_model_ids()); cards_fn gives the matching card rows (pool.capability_tensor()[
+    pool.sim_indices()]), swapped in for the canary and restored after. A model with no simulator
+    outcomes is judged by live reward, not by the canary."""
     from train.rl import evaluate_rl
 
     def canary(model) -> dict[int, float]:
         world = world_fn()
-        return {i: evaluate_rl(model, skeletons, world, i, cost_ref)["quality"] for i in range(len(LAMS))}
+        full = model.cards
+        if cards_fn is not None:
+            model.set_cards(cards_fn())
+        try:
+            return {i: evaluate_rl(model, skeletons, world, i, cost_ref)["quality"] for i in range(len(LAMS))}
+        finally:
+            model.set_cards(full)
 
     return canary

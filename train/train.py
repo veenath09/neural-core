@@ -14,7 +14,7 @@ import hashlib
 import json
 import math
 from collections.abc import Callable, Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 
 import numpy as np
@@ -69,8 +69,25 @@ class Data:
     data_dir: Path | None = None  # set when loaded from disk; enables the oracle cache
 
 
-def load_data(data_dir: Path = DATA_DIR) -> Data:
+def exclude_from(prompts, cards: list, exclude_models: Sequence[str]) -> tuple:
+    """Drop models from the outcome frame (correct_i / cost_i columns) and the card list, renumbering the
+    rest in order, so the pool can be trained or served without them (new-model onboarding tests)."""
+    ids = [c.model_id for c in cards]
+    unknown = [m for m in exclude_models if m not in ids]
+    if unknown:
+        raise ValueError(f"exclude_models not in the pool: {unknown}")
+    keep = [i for i, m in enumerate(ids) if m not in set(exclude_models)]
+    out = prompts.drop(columns=[c for c in prompts.columns if c.startswith(("correct_", "cost_"))])
+    for new, old in enumerate(keep):
+        out[f"correct_{new}"] = prompts[f"correct_{old}"].to_numpy()
+        out[f"cost_{new}"] = prompts[f"cost_{old}"].to_numpy()
+    return out, [replace(cards[old], tier=new) for new, old in enumerate(keep)]
+
+
+def load_data(data_dir: Path = DATA_DIR, exclude_models: Sequence[str] = ()) -> Data:
     prompts, cards = load_prepared(data_dir)
+    if exclude_models:
+        prompts, cards = exclude_from(prompts, cards, exclude_models)
     emb, emb_index = load_cache(data_dir)
     ids = [c.model_id for c in cards]
     world = World(OutcomeTable.from_frame(prompts), ids, np.array([c.mean_cost_usd for c in cards]), emb_index,
@@ -241,9 +258,11 @@ def main() -> None:
     parser.add_argument("--bp-min", type=int, default=2)
     parser.add_argument("--data-dir", type=Path, default=Path(DATA_DIR), help="pool: RouterBench (default) or depth_pool")
     parser.add_argument("--out-dir", type=Path, default=Path("runs"))
+    parser.add_argument("--exclude-model", action="append", default=[], help="leave a model out of the pool (repeatable)")
     a = parser.parse_args()
     train(a.config, a.seed, a.epochs, a.batch_size, bp_min=a.bp_min, max_train=a.max_train, max_val=a.max_val,
-          out_dir=a.out_dir, data=load_data(a.data_dir), log=lambda row: print(json.dumps(row), flush=True))
+          out_dir=a.out_dir, data=load_data(a.data_dir, exclude_models=a.exclude_model),
+          log=lambda row: print(json.dumps(row), flush=True))
 
 
 if __name__ == "__main__":

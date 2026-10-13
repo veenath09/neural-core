@@ -263,14 +263,16 @@ def evaluate_rl(model, skeletons: list[Skeleton], world: World, lam_idx: int, co
 def train_rl(config: str, seed: int, init_dir: Path, updates: int = 1000, batch_size: int = 256, lr: float = 1e-4,
             eval_every: int = 250, max_val: int | None = None, out_dir: Path | None = None, data: Data | None = None,
             reference_reward: float | dict[int, float] | None = None, log=print,
-            calibrate_init: bool = False, calibrate_episodes: int = 1000) -> dict:
+            calibrate_init: bool = False, calibrate_episodes: int = 1000,
+            exclude_models: tuple[str, ...] = ()) -> dict:
     init_dir = Path(init_dir)
     out_dir = Path(out_dir) if out_dir is not None else init_dir / "rl"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     if data is None:
         init_summary = json.loads((init_dir / "metrics.json").read_text())
-        data = load_data(Path(init_summary.get("data_dir", DATA_DIR)))
+        data_dir = Path(init_summary.get("data_dir", DATA_DIR))
+        data = load_data(data_dir, exclude_models=exclude_models) if exclude_models else load_data(data_dir)
     torch.manual_seed(seed)
     rng = np.random.default_rng(seed)
 
@@ -401,9 +403,11 @@ def main() -> None:
     parser.add_argument("--max-val", type=int)
     parser.add_argument("--no-calibrate", action="store_true", help="start from the default D13 init (pilot v1/v2)")
     parser.add_argument("--out", type=Path, help="output dir (default: <init>/rl)")
+    parser.add_argument("--exclude-model", action="append", default=[], help="leave a model out of the pool (repeatable)")
     a = parser.parse_args()
     train_rl(a.config, a.seed, a.init_dir, updates=a.updates, batch_size=a.batch_size, max_val=a.max_val,
-            out_dir=a.out, calibrate_init=not a.no_calibrate, log=lambda row: print(json.dumps(row), flush=True))
+            out_dir=a.out, calibrate_init=not a.no_calibrate, exclude_models=tuple(a.exclude_model),
+            log=lambda row: print(json.dumps(row), flush=True))
 
 
 if __name__ == "__main__":
