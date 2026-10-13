@@ -1,0 +1,177 @@
+{
+  "config": "gate_off",
+  "seed": 0,
+  "params": 726150,
+  "best_val_loss": 0.8363233518600464,
+  "model_config": {
+    "d": 128,
+    "h_cycles": 2,
+    "l_cycles": 3,
+    "memory": true,
+    "gate": "const",
+    "gate_units": 16,
+    "context_free": false
+  },
+  "history": [
+    {
+      "epoch": 0,
+      "train_loss": 0.9237991903401628,
+      "val_loss": 0.9274739055633545,
+      "val_quality": 0.6558999999999999,
+      "val_cost": 0.0030139828000000004,
+      "bp_steps": 2
+    },
+    {
+      "epoch": 1,
+      "train_loss": 0.9129196013076396,
+      "val_loss": 0.9081569747924805,
+      "val_quality": 0.6881833333333334,
+      "val_cost": 0.0030099863,
+      "bp_steps": 3
+    },
+    {
+      "epoch": 2,
+      "train_loss": 0.8962940973571584,
+      "val_loss": 0.8826912894248963,
+      "val_quality": 0.6877416666666667,
+      "val_cost": 0.0028989164,
+      "bp_steps": 4
+    },
+    {
+      "epoch": 3,
+      "train_loss": 0.8819693274135831,
+      "val_loss": 0.8790523180961609,
+      "val_quality": 0.6937166666666666,
+      "val_cost": 0.0029231499,
+      "bp_steps": 4
+    },
+    {
+      "epoch": 4,
+      "train_loss": 0.8699774410151229,
+      "val_loss": 0.8769639797210693,
+      "val_quality": 0.6904166666666667,
+      "val_cost": 0.0028103275,
+      "bp_steps": 5
+    },
+    {
+      "epoch": 5,
+      "train_loss": 0.8605076685736451,
+      "val_loss": 0.8695869240760803,
+      "val_quality": 0.6935916666666667,
+      "val_cost": 0.0027730049000000002,
+      "bp_steps": 5
+    },
+    {
+      "epoch": 6,
+      "train_loss": 0.8517311079592644,
+      "val_loss": 0.8593676099777222,
+      "val_quality": 0.694,
+      "val_cost": 0.0027534599,
+      "bp_steps": 5
+    },
+    {
+      "epoch": 7,
+      "train_loss": 0.8473385398900961,
+      "val_loss": 0.8584240684509278,
+      "val_quality": 0.6938583333333334,
+      "val_cost": 0.0028268897,
+      "bp_steps": 5
+    },
+    {
+      "epoch": 8,
+      "train_loss": 0.8447969744477091,
+      "val_loss": 0.8545797238349915,
+      "val_quality": 0.6959166666666666,
+      "val_cost": 0.0029273054,
+      "bp_steps": 5
+    },
+    {
+      "epoch": 9,
+      "train_loss": 0.8413660216935074,
+      "val_loss": 0.8523496074676513,
+      "val_quality": 0.693125,
+      "val_cost": 0.0028965492999999997,
+      "bp_steps": 5
+    },
+    {
+      "epoch": 10,
+      "train_loss": 0.8406781690030158,
+      "val_loss": 0.8518102645874024,
+      "val_quality": 0.6918666666666666,
+      "val_cost": 0.0029050605000000003,
+      "bp_steps": 5
+    },
+    {
+      "epoch": 11,
+      "train_loss": 0.835443796990793,
+      "val_loss": 0.8491332631111145,
+      "val_quality": 0.6917916666666667,
+      "val_cost": 0.0029020358,
+      "bp_steps": 5
+    },
+    {
+      "epoch": 12,
+      "train_loss": 0.8353440165519714,
+      "val_loss": 0.8502123165130615,
+      "val_quality": 0.6936166666666667,
+      "val_cost": 0.0029453056000000003,
+      "bp_steps": 5
+    },
+    {
+      "epoch": 13,
+      "train_loss": 0.8319425394263449,
+      "val_loss": 0.8483964400291443,
+      "val_quality": 0.6922416666666666,
+      "val_cost": 0.0029195468999999997,
+      "bp_steps": 5
+    },
+    {
+      "epoch": 14,
+      "train_loss": 0.8306940997703166,
+      "val_loss": 0.8489221882820129,
+      "val_quality": 0.694,
+      "val_cost": 0.0029361022000000004,
+      "bp_steps": 5
+    },
+    {
+      "epoch": 15,
+      "train_loss": 0.8338257300702832,
+      "val_loss": 0.8468655004501343,
+      "val_quality": 0.6938583333333334,
+      "val_cost": 0.0029476791000000004,
+      "bp_steps": 5
+    },
+    {
+      "epoch": 16,
+      "train_loss": 0.8258900793292855,
+      "val_loss": 0.8458832216262817,
+      "val_quality": 0.6934333333333333,
+      "val_cost": 0.0029491649,
+      "bp_steps": 5
+    },
+    {
+      "epoch": 17,
+      "train_loss": 0.8330119901065585,
+      "val_loss": 0.8365993766784668,
+      "val_quality": 0.6937000000000001,
+      "val_cost": 0.0029318077,
+      "bp_steps": 5
+    },
+    {
+      "epoch": 18,
+      "train_loss": 0.8260514215578006,
+      "val_loss": 0.8363233518600464,
+      "val_quality": 0.6933083333333333,
+      "val_cost": 0.0029597599,
+      "bp_steps": 5
+    },
+    {
+      "epoch": 19,
+      "train_loss": 0.8255523624299448,
+      "val_loss": 0.8367676544189453,
+      "val_quality": 0.6948333333333333,
+      "val_cost": 0.0029716423,
+      "bp_steps": 5
+    }
+  ]
+}

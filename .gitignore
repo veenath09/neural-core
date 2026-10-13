@@ -9,5 +9,4 @@ __pycache__/
 data/raw/
 data/processed/
 checkpoints/
-runs/
 hf_cache/
