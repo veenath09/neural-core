@@ -8,6 +8,7 @@ Inputs:   ControllerSession, DecisionLog (controller/session.py); StepEnvironmen
           episode_log_rewards (measurement/rl_reward.py).
 Outputs:  run_episode -> EpisodeLog (decisions with rewards filled in).
           replay -> (RLTrace [n, T], behaviour_logp [n, T]) for train/rl.py's loss.
+          OnlineLearner (Task 5): <out_dir>/v{n}.pt per published version, <out_dir>/log.jsonl per update.
 Notes:    Decisions alternate CHOOSE (before round 1) and HALT (after round 1); round 2 has no decision.
           Decision t "triggers" one call: CHOOSE triggers round 1, HALT triggers round 2 on escalate
           (cost 0 on stop). Each step's quality goes on its last decision (episode_log_rewards), and
@@ -21,12 +22,17 @@ Notes:    Decisions alternate CHOOSE (before round 1) and HALT (after round 1); 
 
 from __future__ import annotations
 
+import copy
 import hashlib
+import json
+from collections import deque
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import numpy as np
 import torch
+from torch.optim import AdamW
 
 from controller.features import CHOOSE, HALT, collate
 from controller.policy import score_choose, score_halt
@@ -193,3 +199,171 @@ def replay(model, logs: Sequence[EpisodeLog], log_price_fn: Callable[[int], torc
                         [log.lam_idx for log in logs], dtype=torch.long), choice=choice, valid=valid,
                     halt_slot=halt_slot)
     return trace, behaviour
+
+
+# ---------- Task 5: OnlineLearner (C2-11 replay with importance weights, C2-07 online safety) ----------
+
+@dataclass
+class OnlineConfig:
+    update_every: int = 16  # new sample-mode episodes per update
+    replay_size: int = 48  # extra sample-mode episodes drawn uniformly from the buffer
+    buffer_capacity: int = 2048  # FIFO
+    lr: float = 1e-5
+    beta: float = 0.001  # entropy bonus (fixed)
+    clip_grad: float = 1.0
+    is_clip: float = 2.0  # importance ratio cap
+    distill: float = 0.2  # complexity distillation toward the frozen teacher
+    canary_every: int = 10  # updates
+    canary_episodes: int = 500
+    canary_tol: float = 0.05
+    monitor_window: int = 200
+
+
+def online_loss(trace: RLTrace, behaviour: torch.Tensor, c_teacher: torch.Tensor, baseline, cfg: OnlineConfig
+                ) -> tuple[torch.Tensor, dict]:
+    """-mean(rho * A * logp) - beta * mean(H) + distill * mean_valid((c - c_teacher)^2), rho capped at is_clip.
+
+    A = G - b[band, lam], normalised over choice slots (population std), as in Part 1."""
+    from train.rl import returns_to_go
+
+    device = trace.logp.device
+    choice, valid = trace.choice.to(device), trace.valid.to(device)
+    reward, band = trace.reward.to(device), trace.band.to(device)
+    returns = returns_to_go(reward)
+    advantage = returns - baseline.value(band, trace.lam_idx.to(device)[:, None].expand_as(band)).to(device)
+    zero = torch.zeros((), device=device)
+    if choice.any():
+        a = advantage[choice]
+        norm = ((advantage - a.mean()) / (a.std(unbiased=False) + 1e-8)).detach()
+        raw_rho = torch.exp(trace.logp.detach() - behaviour.to(device))
+        rho = torch.clamp(raw_rho, max=cfg.is_clip)
+        pg = -(rho * norm * trace.logp)[choice].mean()
+        ent = trace.entropy[choice].mean()
+        stats = {"mean_rho": float(rho[choice].mean()), "max_rho": float(rho[choice].max()),
+                 "clipped_frac": float((raw_rho[choice] > cfg.is_clip).float().mean())}
+    else:
+        pg, ent = zero, zero
+        stats = {"mean_rho": 1.0, "max_rho": 1.0, "clipped_frac": 0.0}
+    distill = ((trace.complexity - c_teacher.to(device)) ** 2)[valid].mean() if valid.any() else zero
+    loss = pg - cfg.beta * ent + cfg.distill * distill
+    return loss, stats | {"pg_loss": float(pg.detach()), "distill": float(distill.detach()),
+                          "entropy": float(ent.detach()),
+                          "episode_return": float(returns[:, 0].mean()) if returns.shape[1] else 0.0}
+
+
+class OnlineLearner:
+    """Buffers EpisodeLogs and turns them into small policy-gradient updates between episodes.
+
+    Only sample-mode logs feed the loss; serve-mode logs are kept (card updates, monitoring) but never
+    trigger or join an update. The learner trains its own model; serving sessions load published()
+    weights at reset, so a publish never changes a running episode. log_price_fn(pool_size) gives the
+    price vector replay needs for decisions made with that pool size."""
+
+    def __init__(self, model, teacher, baseline, cfg: OnlineConfig, canary, out_dir: Path, rng: np.random.Generator,
+                 log_price_fn: Callable[[int], torch.Tensor]):
+        self.model, self.teacher, self.baseline, self.cfg = model, teacher, baseline, cfg
+        self.canary, self.out_dir, self.rng, self.log_price_fn = canary, Path(out_dir), rng, log_price_fn
+        self.out_dir.mkdir(parents=True, exist_ok=True)
+        self.teacher.eval()
+        for p in self.teacher.parameters():
+            p.requires_grad_(False)
+        self.lr = cfg.lr
+        self.opt = AdamW(self.model.parameters(), lr=self.lr, weight_decay=0.01)
+        self.buffer: deque[EpisodeLog] = deque(maxlen=cfg.buffer_capacity)
+        self.new: list[EpisodeLog] = []
+        self.updates, self.version = 0, 0
+        self.reference = canary(self.model) if canary is not None else None
+        self.model.train()
+        self._published = self._snapshot()
+        self.last_good = {"model": self._published, "baseline": copy.deepcopy(baseline.state_dict())}
+        self._rewards: deque[float] = deque(maxlen=cfg.monitor_window)
+        self._reward_ref: float | None = None
+
+    def _snapshot(self) -> dict:
+        return {k: v.detach().clone().cpu() for k, v in self.model.state_dict().items()}
+
+    def published(self) -> tuple[dict, int]:
+        return {k: v.clone() for k, v in self._published.items()}, self.version
+
+    def observe(self, log: EpisodeLog) -> dict | None:
+        self.buffer.append(log)
+        if log.mode != "sample":
+            return None
+        self.new.append(log)
+        if len(self.new) < self.cfg.update_every:
+            return None
+        return self._update()
+
+    def _batch(self) -> list[EpisodeLog]:
+        new, self.new = self.new, []
+        fresh = {id(x) for x in new}
+        older = [x for x in self.buffer if x.mode == "sample" and id(x) not in fresh]
+        k = min(self.cfg.replay_size, len(older))
+        extra = [older[i] for i in self.rng.choice(len(older), size=k, replace=False)] if k else []
+        return new + extra
+
+    def _update(self) -> dict:
+        from train.rl import returns_to_go
+
+        batch = self._batch()
+        self.model.train()
+        trace, behaviour = replay(self.model, batch, self.log_price_fn)
+        with torch.no_grad():
+            c_teacher = replay(self.teacher, batch, self.log_price_fn)[0].complexity
+        loss, stats = online_loss(trace, behaviour, c_teacher, self.baseline, self.cfg)
+        self.opt.zero_grad()
+        loss.backward()
+        grad_norm = float(torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.cfg.clip_grad))
+        self.opt.step()
+        if trace.choice.any():
+            returns = returns_to_go(trace.reward)
+            lam_bt = trace.lam_idx[:, None].expand_as(trace.band)
+            self.baseline.update(trace.band[trace.choice], lam_bt[trace.choice], returns[trace.choice])
+        self.updates += 1
+        alarms = []
+        if self.canary is not None and self.updates % self.cfg.canary_every == 0:
+            quality = self.canary(self.model)
+            self.model.train()
+            if any(q < self.reference[i] - self.cfg.canary_tol for i, q in quality.items()):
+                self._rollback()
+                alarms.append("rollback")
+            else:
+                self.last_good = {"model": self._snapshot(), "baseline": copy.deepcopy(self.baseline.state_dict())}
+        if "rollback" not in alarms:
+            self._published = self._snapshot()
+        self.version += 1
+        torch.save(self._published, self.out_dir / f"v{self.version}.pt")
+        row = {"update": self.updates, "loss": float(loss.detach()), "grad_norm": grad_norm, "lr": self.lr,
+               "policy_version": self.version, "batch": len(batch), "alarms": alarms} | stats
+        with (self.out_dir / "log.jsonl").open("a") as f:
+            f.write(json.dumps(row) + "\n")
+        return row
+
+    def _rollback(self) -> None:
+        self.model.load_state_dict(self.last_good["model"])
+        self.baseline.load_state_dict(copy.deepcopy(self.last_good["baseline"]))
+        self.lr /= 2
+        self.opt = AdamW(self.model.parameters(), lr=self.lr, weight_decay=0.01)  # drop stale moments
+        self._published = {k: v.clone() for k, v in self.last_good["model"].items()}
+
+    def monitor(self, log: EpisodeLog) -> list[str]:
+        """Rolling live reward; alarm (no rollback: the live signal is noisy) on a drop > canary_tol."""
+        self._rewards.append(sum(d.reward for d in log.decisions))
+        if len(self._rewards) < self.cfg.monitor_window:
+            return []
+        mean = float(np.mean(self._rewards))
+        if self._reward_ref is None:
+            self._reward_ref = mean
+            return []
+        return ["live_reward_drop"] if mean < self._reward_ref - self.cfg.canary_tol else []
+
+
+def make_canary(skeletons, world_fn: Callable[[], object], cost_ref: float) -> Callable:
+    """Serve-mode val quality at every lambda index on a fixed set of simulator skeletons."""
+    from train.rl import evaluate_rl
+
+    def canary(model) -> dict[int, float]:
+        world = world_fn()
+        return {i: evaluate_rl(model, skeletons, world, i, cost_ref)["quality"] for i in range(len(LAMS))}
+
+    return canary
