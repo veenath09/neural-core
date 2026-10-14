@@ -87,3 +87,27 @@ def test_attn_core_requires_key_mask():
 def test_unknown_arch_is_rejected():
     with pytest.raises(ValueError, match="arch"):
         HLCore(d=32, arch="rnn")
+
+
+def test_attn_core_residual_diagnostics_ignore_masked_tokens():
+    torch.manual_seed(0)
+    core = HLCore(d=32, arch="attn")
+    x = torch.randn(2, 6, 32)
+    mask = torch.ones(2, 6, dtype=torch.bool)
+    mask[0, 4:] = False
+    mask[1, 5:] = False
+
+    # h = x, so z_h starts as x; recompute the first L call by hand.
+    z_l0 = core.zL_init.expand_as(x)
+    with torch.no_grad():
+        expected_new = core.L(z_l0 + x + x, mask)
+    r = (expected_new - z_l0).norm(dim=-1)
+    expected_valid_only = (r * mask).sum().item() / mask.sum().item()
+    expected_all_tokens = r.mean().item()
+    assert expected_valid_only != pytest.approx(expected_all_tokens)
+
+    with torch.no_grad():
+        _, rec = core(x, x, record=True, key_mask=mask)
+    first_l_value = rec[0][1]
+    assert first_l_value == pytest.approx(expected_valid_only)
+    assert first_l_value != pytest.approx(expected_all_tokens)

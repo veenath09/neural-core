@@ -77,6 +77,14 @@ class HLCore(nn.Module):
     def _step(self, module: nn.Module, inp: torch.Tensor, key_mask: torch.Tensor | None) -> torch.Tensor:
         return module(inp) if self.arch == "mlp" else module(inp, key_mask)
 
+    @staticmethod
+    def _residual(new: torch.Tensor, old: torch.Tensor, key_mask: torch.Tensor | None) -> float:
+        """Mean residual norm; averages over valid tokens only when key_mask is given (attn mode)."""
+        r = (new - old).norm(dim=-1)
+        if key_mask is None:
+            return r.mean().item()
+        return (r * key_mask).sum().item() / key_mask.sum().item()
+
     def forward(self, h: torch.Tensor, x: torch.Tensor, bp_steps: int = 5, record: bool = False,
                 key_mask: torch.Tensor | None = None) -> tuple[torch.Tensor, list[tuple[str, float]]]:
         if self.arch == "attn" and key_mask is None:
@@ -93,11 +101,11 @@ class HLCore(nn.Module):
                 with torch.set_grad_enabled(grad and i > n_l - l_bp):
                     new = self._step(self.L, z_l + z_h + x, key_mask)
                 if record:
-                    residuals.append(("L", (new - z_l).norm(dim=-1).mean().item()))
+                    residuals.append(("L", self._residual(new, z_l, key_mask)))
                 z_l = new
             with torch.set_grad_enabled(grad and cycle >= self.h_cycles - h_bp):
                 new = self._step(self.H, z_h + z_l + h, key_mask)
             if record:
-                residuals.append(("H", (new - z_h).norm(dim=-1).mean().item()))
+                residuals.append(("H", self._residual(new, z_h, key_mask)))
             z_h = new
         return z_h, residuals
