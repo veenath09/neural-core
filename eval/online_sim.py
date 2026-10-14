@@ -329,3 +329,52 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+# ---------- paired evaluation of the final weights ----------
+
+def episode_rewards(model, skeletons, world: World, lam_idx: int, cost_ref: float, batch_size: int = 512) -> np.ndarray:
+    """Per-episode serve-mode reward at one lambda (greedy, so two models can be compared episode by episode)."""
+    from measurement.rl_reward import episode_reward
+    from measurement.scorer import CompositeScorer
+    from train.rollout import rollout
+    from train.train import make_episodes
+
+    model.eval()
+    scorer, out = CompositeScorer.from_yaml("conf/score.yaml"), []
+    with torch.no_grad():
+        for s in range(0, len(skeletons), batch_size):
+            eps = make_episodes(skeletons[s:s + batch_size], world)
+            res = rollout(model, eps, world, policy="serve", lam_idx=np.full(len(eps), lam_idx), cost_ref=cost_ref).results
+            out += [episode_reward(scorer, r.quality, r.cost_usd, e.n_steps, LAMS[lam_idx]) for r, e in zip(res, eps)]
+    return np.array(out)
+
+
+def paired_eval(init_dir: Path, run_dir: Path, skeletons, n_boot: int = 0) -> dict:
+    """Final learned weights vs the frozen start on the same held-out episodes, under the learn arm's final cards.
+
+    run_dir is a stream's learn output (v{n}.pt files, pool.json). Returns, per lambda, the mean reward of each
+    and the paired difference with a 95% normal CI (1.96 * sd / sqrt(n))."""
+    init_dir, run_dir = Path(init_dir), Path(run_dir)
+    _, data, _ = _init(init_dir)
+    pool = PoolState.from_json(json.loads((run_dir / "pool.json").read_text()))
+    ids = pool.model_ids()
+    world = subset_world(data.world, ids)
+    # cards are not part of a checkpoint; both models get the final pool's cards below
+    frozen = load_model(init_dir, subset_data(data, ids), strict=False)
+    learned = copy.deepcopy(frozen)
+    last = max(run_dir.glob("v*.pt"), key=lambda p: int(p.stem[1:]))
+    learned.load_state_dict(torch.load(last, weights_only=True))
+    for m in (frozen, learned):
+        m.set_cards(pool.capability_tensor())
+    cost_ref = cost_ref_for(data.data_dir)
+    out = {"final_version": int(last.stem[1:]), "episodes": len(skeletons), "per_lambda": {}}
+    for i, lam in enumerate(LAMS):
+        a, b = episode_rewards(learned, skeletons, world, i, cost_ref), episode_rewards(frozen, skeletons, world, i, cost_ref)
+        d = a - b
+        half = 1.96 * d.std(ddof=1) / math.sqrt(len(d))
+        out["per_lambda"][f"{lam:g}"] = {"learned": float(a.mean()), "frozen": float(b.mean()), "diff": float(d.mean()),
+                                         "ci95": [float(d.mean() - half), float(d.mean() + half)]}
+    out["learned_better_at_every_lambda"] = all(v["ci95"][0] > 0 for v in out["per_lambda"].values())
+    out["learned_worse_somewhere"] = any(v["ci95"][1] < 0 for v in out["per_lambda"].values())
+    return out

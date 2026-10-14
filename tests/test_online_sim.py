@@ -68,3 +68,18 @@ def test_probe_card_keeps_depth_features():
     c = probe_card(ids[3], data, [x for x in cards if x.model_id != ids[3]], n_probe=20)
     assert isinstance(c, ModelCard) and len(c.capability) == 8 and c.capability[6:] == [1.0, 0.25]
     assert all(0 <= a <= 1 for a in c.capability[:5])
+
+
+def test_paired_eval_is_zero_for_unchanged_weights(tmp_path, monkeypatch):
+    import shutil
+
+    from eval.online_sim import paired_eval
+
+    data = tiny_data()
+    init = _trained(tmp_path, data)
+    stream(init, data.train[:8], data, OnlineConfig(update_every=100), learn=True, lam_idx_fn=lambda i: 0,
+           out_dir=tmp_path / "s")
+    shutil.copy(init / "model.pt", tmp_path / "s" / "v0.pt")  # "final" weights = the start: no learning
+    monkeypatch.setattr("eval.online_sim._init", lambda d: (d, data, {}))  # tiny data lives in memory
+    out = paired_eval(init, tmp_path / "s", data.val[:16])
+    assert all(v["diff"] == 0 for v in out["per_lambda"].values()) and not out["learned_worse_somewhere"]
