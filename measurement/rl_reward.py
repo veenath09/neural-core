@@ -41,6 +41,17 @@ def load_cost_ref(path: str | Path = "conf/score.yaml") -> float:
     return CompositeScorer.from_yaml(path).cfg.cost_ref_usd
 
 
+def cost_ref_for(data_dir: str | Path | None) -> float:
+    """The pool's own per-step cost reference: <data_dir>/cost_ref.json when the pool ships one (the depth
+    pools: strongest option's mean per-step cost on the train split, the statistic conf/score.yaml uses for
+    the RouterBench pool), else the frozen RouterBench value."""
+
+    path = Path(data_dir) / "cost_ref.json" if data_dir is not None else None
+    if path is not None and path.exists():
+        return float(json.loads(path.read_text())["cost_ref_usd"])
+    return load_cost_ref()
+
+
 def episode_reward(
     scorer: CompositeScorer,
     quality: float,

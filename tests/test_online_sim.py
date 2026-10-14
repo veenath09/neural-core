@@ -53,3 +53,18 @@ def test_shifted_skeletons_change_the_task_mix():
     sks = shifted_skeletons(table, list(table.prompt_ids), n=200, seed=0, shares={0: 0.9, 1: 0.1}, by="step_type")
     types = np.array([table.step_type[table.index[p]] for sk in sks for p in sk.prompt_ids])
     assert (types == 0).mean() > 0.75  # the tiny table is 50/50; the shift pushes it to ~90/10
+
+
+def test_probe_card_keeps_depth_features():
+    import torch
+
+    from controller.contracts import ModelCard
+    from eval.online_sim import probe_card
+
+    data = tiny_data()
+    data.cards = torch.cat([data.cards, torch.tensor([[1.0, 0.25]] * 4)], dim=1)  # 8-feature depth-style cards
+    cards = cards_from_data(data)
+    ids = list(data.world.model_ids)
+    c = probe_card(ids[3], data, [x for x in cards if x.model_id != ids[3]], n_probe=20)
+    assert isinstance(c, ModelCard) and len(c.capability) == 8 and c.capability[6:] == [1.0, 0.25]
+    assert all(0 <= a <= 1 for a in c.capability[:5])

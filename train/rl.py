@@ -57,7 +57,7 @@ from torch.optim import AdamW
 from controller.model import CONFIGS
 from data.episodes import Skeleton
 from data.routerbench import DATA_DIR
-from measurement.rl_reward import LAMS, episode_reward, load_cost_ref  # re-exported; do not duplicate
+from measurement.rl_reward import LAMS, cost_ref_for, episode_reward, load_cost_ref  # re-exported; do not duplicate
 from measurement.scorer import CompositeScorer
 from train.baseline import BucketedBaseline
 from train.rollout import LOSS_WEIGHTS, RLTrace, World, rollout
@@ -284,7 +284,7 @@ def train_rl(config: str, seed: int, init_dir: Path, updates: int = 1000, batch_
         return AdamW(model.parameters(), lr=learning_rate, weight_decay=0.01)
 
     opt = make_opt(lr)
-    cost_ref = load_cost_ref()
+    cost_ref = cost_ref_for(data.data_dir)
 
     val_sk = data.val[:max_val] if max_val else data.val
     train_sk = data.train

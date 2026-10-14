@@ -41,10 +41,10 @@ from data.episodes import BUDGET_FACTOR, EPISODE_TYPES, MAX_STEPS, MIN_STEPS, Sk
 from data.routerbench import SOURCES, OutcomeTable
 from measurement.online_env import SimStepEnv
 from measurement.profile_updater import PRIOR_WEIGHT, ProfileUpdater
-from measurement.rl_reward import LAMS, load_cost_ref
+from measurement.rl_reward import LAMS, cost_ref_for
 from train.baseline import BucketedBaseline
 from train.online import OnlineConfig, OnlineLearner, make_canary, run_episode
-from train.pool_state import PoolState
+from train.pool_state import N_ACC, PoolState
 from train.rollout import World
 from train.train import Data, load_data, load_model
 
@@ -80,15 +80,16 @@ def cards_from_data(data: Data) -> list[ModelCard]:
 def probe_card(model_id: str, data: Data, existing: list[ModelCard], n_probe: int = 50, seed: int = 0) -> ModelCard:
     """Card for a joining model: accuracy priors = mean of the existing cards, then n_probe training-split probes
     per step type with the w = 50 update; cost = mean probe cost. Generalises measurement.onboarding's
-    build_onboarded_card (which requires exactly three existing cards) to any pool size."""
+    build_onboarded_card (which requires exactly three existing cards) to any pool size. Features after the cost
+    slot (the depth pool's depth level and thinking tokens) describe the request itself and are visible from the
+    probe calls, so they are taken from the model's own card."""
     t, i = data.world.table, data.world.model_ids.index(model_id)
     train_ids = {p for sk in data.train for p in sk.prompt_ids}
     rows = np.array([t.index[p] for p in t.prompt_ids if p in train_ids])
     rng = np.random.default_rng(seed)
-    n_acc = len(existing[0].capability) - 1
-    prior = [float(np.mean([c.capability[k] for c in existing])) for k in range(n_acc)]
+    prior = [float(np.mean([c.capability[k] for c in existing])) for k in range(N_ACC)]
     obs, costs = {}, []
-    for k in range(n_acc):
+    for k in range(N_ACC):
         pool_k = rows[t.step_type[rows] == k]
         if len(pool_k) == 0:
             continue
@@ -96,9 +97,11 @@ def probe_card(model_id: str, data: Data, existing: list[ModelCard], n_probe: in
         obs[k] = (float(t.correct[take, i].mean()), len(take))
         costs += list(t.cost[take, i])
     cost = float(np.mean(costs))
+    extra = [float(x) for x in data.cards[i][N_ACC + 1:]]
     cold = ModelCard(model_id=model_id, provider="simulator", tier=len(existing), mean_cost_usd=cost,
-                     price_source="training probes", price_date="", capability=prior + [math.log10(cost)])
-    return ProfileUpdater(prior_weight=PRIOR_WEIGHT).update_many(cold, obs)
+                     price_source="training probes", price_date="", capability=prior + [math.log10(cost)] + extra)
+    pool = PoolState([cold], ProfileUpdater(prior_weight=PRIOR_WEIGHT))
+    return pool._update(cold, obs)
 
 
 # ---------- workload shift ----------
@@ -156,7 +159,7 @@ def stream(init_dir: Path, skeletons: Sequence[Skeleton], data: Data, cfg: Onlin
     teacher, serving = copy.deepcopy(model), copy.deepcopy(model)
     # card updates see the verifier's noisy signal; the simulator's flip rate is known, so de-bias it
     pool = PoolState([known[m] for m in start_ids], ProfileUpdater(prior_weight=PRIOR_WEIGHT), flip_p=VERIFIER_FLIP_P)
-    cost_ref = load_cost_ref()
+    cost_ref = cost_ref_for(data.data_dir)
 
     def sync_cards() -> None:
         cards = pool.capability_tensor()
