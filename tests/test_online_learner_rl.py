@@ -136,14 +136,13 @@ def test_publish_does_not_change_running_episode(tmp_path):
 def test_canary_rollback_restores_weights_and_halves_lr(tmp_path):
     world, eps = world_and_episodes(16)
     model = tiny_model("full")
-    calls = {"n": 0}
+    teacher = copy.deepcopy(model)
 
-    def canary(m):
-        calls["n"] += 1
-        return {i: 1.0 if calls["n"] == 1 else 0.0 for i in range(len(LAMS))}  # reference fine, then bad
+    def canary(m):  # the frozen start (teacher) scores 1, the learner 0: learning made it worse
+        return {i: 1.0 if m is teacher else 0.0 for i in range(len(LAMS))}
 
     cfg = OnlineConfig(lr=1e-2, canary_every=1)
-    learner = _learner(model, world, tmp_path, cfg=cfg, canary=canary)
+    learner = _learner(model, world, tmp_path, cfg=cfg, canary=canary, teacher=teacher)
     start = {k: v.clone() for k, v in model.state_dict().items()}
     base_start = learner.baseline.state_dict()["table"].clone()
     row = None
@@ -154,6 +153,20 @@ def test_canary_rollback_restores_weights_and_halves_lr(tmp_path):
     assert torch.equal(learner.baseline.table, base_start)
     assert learner.lr == pytest.approx(5e-3)
     assert all(torch.equal(start[k], v) for k, v in learner.published()[0].items())
+
+
+def test_canary_compares_with_frozen_start_under_same_cards(tmp_path):
+    world, eps = world_and_episodes(16)
+    model = tiny_model("full")
+
+    def canary(m):  # cards drifted: both score low, but equally -> learning did no harm, no rollback
+        return {i: 0.2 for i in range(len(LAMS))}
+
+    learner = _learner(model, world, tmp_path, cfg=OnlineConfig(lr=1e-2, canary_every=1), canary=canary)
+    row = None
+    for log in _logs(model, world, eps, "sample"):
+        row = learner.observe(log) or row
+    assert row["alarms"] == [] and row["canary_reference"] == row["canary"]
 
 
 def test_fresh_logs_give_part1_policy_gradient():

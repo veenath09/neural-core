@@ -263,7 +263,12 @@ class OnlineLearner:
     Only sample-mode logs feed the loss; serve-mode logs are kept (card updates, monitoring) but never
     trigger or join an update. The learner trains its own model; serving sessions load published()
     weights at reset, so a publish never changes a running episode. log_price_fn(pool_size) gives the
-    price vector replay needs for decisions made with that pool size."""
+    price vector replay needs for decisions made with that pool size.
+
+    Canary: every canary_every updates the learner and the frozen starting weights (the teacher) are both
+    scored by canary() under the same current cards; a drop of more than canary_tol below the teacher at any
+    lambda rolls back. Comparing with a reference measured once at the start instead made card updates alone
+    trigger rollbacks (30 in 5,000 episodes even at lr 1e-5), which no weight rollback can undo."""
 
     def __init__(self, model, teacher, baseline, cfg: OnlineConfig, canary, out_dir: Path, rng: np.random.Generator,
                  log_price_fn: Callable[[int], torch.Tensor]):
@@ -278,7 +283,6 @@ class OnlineLearner:
         self.buffer: deque[EpisodeLog] = deque(maxlen=cfg.buffer_capacity)
         self.new: list[EpisodeLog] = []
         self.updates, self.version = 0, 0
-        self.reference = canary(self.model) if canary is not None else None
         self.model.train()
         self._published = self._snapshot()
         self.last_good = {"model": self._published, "baseline": copy.deepcopy(baseline.state_dict())}
@@ -328,9 +332,10 @@ class OnlineLearner:
         self.updates += 1
         alarms = []
         if self.canary is not None and self.updates % self.cfg.canary_every == 0:
-            quality = self.canary(self.model)
+            quality, reference = self.canary(self.model), self.canary(self.teacher)
             self.model.train()
-            if any(q < self.reference[i] - self.cfg.canary_tol for i, q in quality.items()):
+            stats |= {"canary": quality, "canary_reference": reference}
+            if any(q < reference[i] - self.cfg.canary_tol for i, q in quality.items()):
                 self._rollback()
                 alarms.append("rollback")
             else:

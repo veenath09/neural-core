@@ -36,7 +36,7 @@ from controller.contracts import ModelCard
 from controller.embedding_cache import EmbeddingCache
 from controller.policy import log_price
 from controller.session import ControllerSession
-from data.env import Episode
+from data.env import VERIFIER_FLIP_P, Episode
 from data.episodes import BUDGET_FACTOR, EPISODE_TYPES, MAX_STEPS, MIN_STEPS, Skeleton, type_counts
 from data.routerbench import SOURCES, OutcomeTable
 from measurement.online_env import SimStepEnv
@@ -154,7 +154,8 @@ def stream(init_dir: Path, skeletons: Sequence[Skeleton], data: Data, cfg: Onlin
     if (init_dir / "baseline.pt").exists():
         baseline.load_state_dict(torch.load(init_dir / "baseline.pt", weights_only=False))
     teacher, serving = copy.deepcopy(model), copy.deepcopy(model)
-    pool = PoolState([known[m] for m in start_ids], ProfileUpdater(prior_weight=PRIOR_WEIGHT))
+    # card updates see the verifier's noisy signal; the simulator's flip rate is known, so de-bias it
+    pool = PoolState([known[m] for m in start_ids], ProfileUpdater(prior_weight=PRIOR_WEIGHT), flip_p=VERIFIER_FLIP_P)
     cost_ref = load_cost_ref()
 
     def sync_cards() -> None:

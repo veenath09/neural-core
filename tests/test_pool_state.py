@@ -169,3 +169,23 @@ def test_load_data_excludes_model(tmp_path):
     assert frame2["cost_1"].tolist() == [3.0, 3.0] and [c.tier for c in cards2] == [0, 1, 2]
     with pytest.raises(ValueError):
         exclude_from(frame, cards, ("nope",))
+
+
+def test_record_debiases_a_noisy_verifier():
+    costs = [1e-4, 2e-4, 4e-4, 8e-4]
+    pool = PoolState([card(m, i, c) for i, (m, c) in enumerate(zip(IDS, costs))], ProfileUpdater(prior_weight=50),
+                     flip_p=0.15)
+    # true accuracy 0.9 seen through a 15% flip: observed 0.9*0.85 + 0.1*0.15 = 0.78
+    pool.record(fake_log([(IDS[0], 0, 1.0, 1e-4)] * 78 + [(IDS[0], 0, 0.0, 1e-4)] * 22))
+    assert pool.cards[0].capability[0] == pytest.approx((50 * 0.7 + 100 * 0.9) / 150, abs=1e-6)
+
+
+def test_record_handles_depth_cards_and_keeps_extra_features():
+    depth_card = ModelCard(model_id="luna@high", provider="openai", tier=0, mean_cost_usd=1e-4, price_source="t",
+                           price_date="2026-10-22", capability=[0.7] * 5 + [-4.0, 1.0, 0.5])
+    pool = PoolState([depth_card], ProfileUpdater(prior_weight=50))
+    pool.record(fake_log([("luna@high", 4, 1.0, 1e-3)] * 50))
+    cap = pool.cards[0].capability
+    assert cap[4] == pytest.approx((50 * 0.7 + 50 * 1.0) / 100)  # gsm8k (step type 4) updated
+    assert cap[5] == pytest.approx(-3.0)  # cost slot: log10 of the running mean cost
+    assert cap[6:] == [1.0, 0.5]  # depth features untouched
