@@ -215,6 +215,10 @@ With unit-norm `k`, one write moves `W k` exactly a fraction `r` of the way to `
 
 **Licences.** HRM, HRM-Text, ncps, CfC: Apache-2.0. ttt-lm-pytorch, titans-pytorch, TRM: MIT. Our modules re-implement from the equations; each file names its sources in a header, and `LICENSE-HRM-Text` is kept because `core.py` follows HRM-Text's schedule.
 
+### D12. Gated-attention core variant (v1.3 → v1.4)
+
+A second core architecture, `arch = "attn"`, alongside the MLP core of D11. The six role tokens `[task, budget, step, trace−1, trace−2, memory readout]` keep their identity (learned slot embedding each, no RoPE because they are roles, not a sequence) instead of being averaged, so the controller can compare the current step with earlier rounds directly (retry, propagation). Each H/L module is 2 pre-norm blocks of HRM-Text gated self-attention (fused bias-free gate/q/k/v projection, `o_proj(σ(gate) ⊙ attn)`, 4 heads × 32) followed by SwiGLU, capped by a weightless RMSNorm. The H/L schedule, fixed z_L init, input re-injection and staircase gradient horizon are those of D11, applied per token. An attention key mask hides absent trace slots and everything `context_free` must not see; the heads read the current-step token. Configs: `full_attn`, `memory_off_attn`, `context_free_attn`. The MLP configs are unchanged.
+
 ### D9. Engineering
 
 - Layout: packages at repo root (`controller/`, `data/`, `train/`, `eval/`). Delete the empty `models/` to avoid confusion with LLM "models".
