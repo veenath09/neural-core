@@ -8,7 +8,8 @@ and its H/L split.
 Changed: SwiGLU MLP blocks on one vector per module instead of attention over a
 token sequence; input x injected at every L-step (as in HRM and TRM); the H input h
 re-injected at every H-step so the task/budget encoders get gradient under
-truncated backprop; z_H initialised from pooled H tokens."""
+truncated backprop; z_H initialised from pooled H tokens.
+arch="attn" (D12) swaps each module for HRM-Text gated-attention blocks over role tokens (controller/attention.py)."""
 
 from __future__ import annotations
 
@@ -59,15 +60,27 @@ def bp_split(bp_steps: int, h_cycles: int) -> tuple[int, int]:
 
 
 class HLCore(nn.Module):
-    def __init__(self, d: int = 128, h_cycles: int = 2, l_cycles: int = 3):
+    def __init__(self, d: int = 128, h_cycles: int = 2, l_cycles: int = 3, arch: str = "mlp",
+                 n_heads: int = 4):
         super().__init__()
-        self.h_cycles, self.l_cycles = h_cycles, l_cycles
-        self.H = ReasoningModule(d)
-        self.L = ReasoningModule(d)
+        self.h_cycles, self.l_cycles, self.arch = h_cycles, l_cycles, arch
+        if arch == "mlp":
+            self.H, self.L = ReasoningModule(d), ReasoningModule(d)
+        elif arch == "attn":
+            from controller.attention import AttnModule
+
+            self.H, self.L = AttnModule(d, n_heads=n_heads), AttnModule(d, n_heads=n_heads)
+        else:
+            raise ValueError(f"unknown arch {arch!r}")
         self.register_buffer("zL_init", nn.init.trunc_normal_(torch.empty(d), std=1.0, a=-2.0, b=2.0))
 
-    def forward(self, h: torch.Tensor, x: torch.Tensor, bp_steps: int = 5,
-                record: bool = False) -> tuple[torch.Tensor, list[tuple[str, float]]]:
+    def _step(self, module: nn.Module, inp: torch.Tensor, key_mask: torch.Tensor | None) -> torch.Tensor:
+        return module(inp) if self.arch == "mlp" else module(inp, key_mask)
+
+    def forward(self, h: torch.Tensor, x: torch.Tensor, bp_steps: int = 5, record: bool = False,
+                key_mask: torch.Tensor | None = None) -> tuple[torch.Tensor, list[tuple[str, float]]]:
+        if self.arch == "attn" and key_mask is None:
+            raise ValueError("the attention core needs a key_mask")
         grad = torch.is_grad_enabled()
         h_bp, l_bp = bp_split(bp_steps, self.h_cycles)
         n_l = self.h_cycles * self.l_cycles
@@ -78,12 +91,12 @@ class HLCore(nn.Module):
             for _ in range(self.l_cycles):
                 i += 1
                 with torch.set_grad_enabled(grad and i > n_l - l_bp):
-                    new = self.L(z_l + z_h + x)
+                    new = self._step(self.L, z_l + z_h + x, key_mask)
                 if record:
                     residuals.append(("L", (new - z_l).norm(dim=-1).mean().item()))
                 z_l = new
             with torch.set_grad_enabled(grad and cycle >= self.h_cycles - h_bp):
-                new = self.H(z_h + z_l + h)
+                new = self._step(self.H, z_h + z_l + h, key_mask)
             if record:
                 residuals.append(("H", (new - z_h).norm(dim=-1).mean().item()))
             z_h = new

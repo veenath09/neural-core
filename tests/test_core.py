@@ -1,4 +1,5 @@
 import torch
+import pytest
 
 from controller.core import HLCore, ReasoningModule, bp_schedule, bp_split
 
@@ -50,3 +51,39 @@ def test_horizon_controls_which_l_calls_build_a_graph():
     with torch.no_grad():
         core(torch.randn(2, 32), torch.randn(2, 32), bp_steps=5)
     assert calls == [False] * 6
+
+
+def test_attn_core_shapes_and_record():
+    core = HLCore(d=32, arch="attn")
+    x = torch.randn(3, 6, 32)
+    mask = torch.ones(3, 6, dtype=torch.bool)
+    z, rec = core(x, x, record=True, key_mask=mask)
+    assert z.shape == (3, 6, 32)
+    assert [k for k, _ in rec] == ["L", "L", "L", "H", "L", "L", "L", "H"]
+
+
+def test_attn_core_uses_same_gradient_horizon():
+    core = HLCore(d=32, arch="attn")
+    calls = []
+    forward = core.L.forward
+
+    def spy(inp, key_mask):
+        calls.append(torch.is_grad_enabled())
+        return forward(inp, key_mask)
+
+    core.L.forward = spy
+    x = torch.randn(2, 6, 32)
+    core(x, x, bp_steps=4, key_mask=torch.ones(2, 6, dtype=torch.bool))
+    assert calls == [False, False, False, False, True, True]
+
+
+def test_attn_core_requires_key_mask():
+    core = HLCore(d=32, arch="attn")
+    x = torch.randn(1, 6, 32)
+    with pytest.raises(ValueError, match="key_mask"):
+        core(x, x)
+
+
+def test_unknown_arch_is_rejected():
+    with pytest.raises(ValueError, match="arch"):
+        HLCore(d=32, arch="rnn")
