@@ -1,6 +1,5 @@
 # Neuro-inspired Framework for Adaptive AI Agent Orchestration
 
-**Project J26-DS-359**
 
 ---
 
