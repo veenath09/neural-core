@@ -37,7 +37,7 @@ The controller watches the workflow unfold and **adapts its routing to the task 
 | **Liquid neurons** | Neurons with input-dependent time constants (from C. elegans studies) | The **CfC gate**, a liquid-time-constant cell with its own state and a time input, sets how strongly each experience is stored | Liquid / CfC networks (Hasani et al., 2021–22) |
 | **Metacognition: knowing when you're wrong** | Monitoring confidence and seeking help | A **halt head** decides, after seeing the verifier's verdict, whether to escalate to a stronger model | D5 of the spec; TRM-style halting |
 
-These are **inspirations**, not claims of biological realism. Each one is implemented as a standard, testable neural-network component.
+These are **inspirations**, not claims of biological realism. Each one is implemented as a standard, testable neural-network building block.
 
 ---
 
