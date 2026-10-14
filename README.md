@@ -1,7 +1,6 @@
 # Neuro-inspired Framework for Adaptive AI Agent Orchestration
 
-**Project J26-DS-359 · component C1: the Adaptive Orchestration Controller ("neural core")**
-V M Wickramaarachchi (IT23230460)
+**Project J26-DS-359**
 
 ---
 
@@ -51,7 +50,7 @@ These are **inspirations**, not claims of biological realism. Each one is implem
                                  │ step + history            │ Strategy
                                  ▼                           │ (model, escalate?)
         ┌────────────────────────────────────────────────────┴───────────────┐
-        │             C1  ADAPTIVE ORCHESTRATION CONTROLLER                  │
+        │               ADAPTIVE ORCHESTRATION CONTROLLER                    │
         │                                                                    │
         │  perceive ──▶ remember ──▶ reason ──▶ decide ──▶ monitor itself    │
         │  (encoder)    (episode     (H/L core:  (model     (halt head:      │
@@ -71,20 +70,20 @@ These are **inspirations**, not claims of biological realism. Each one is implem
                                      └──▶ outcome written into the trace and into memory
 ```
 
-The framework has several components, and C1 is the one built in this repository. The others build against C1's **contracts** (`controller/contracts.py`):
+The controller talks to the rest of the system through four typed **contracts** (`controller/contracts.py`):
 
 | Contract | Direction | What it carries |
 |---|---|---|
-| `TaskRep` | → C1 | The step to decide on: prompt, step type, round, the last 2 outcomes (`TraceItem`s), budget, position in the workflow |
-| `Strategy` | C1 → | The decision: `model_id`, `halt` (stop / escalate), complexity and confidence. Also `tools`, `memory`, `depth`, `verification`, `topology`, which are fixed defaults in this prototype and are the hooks for later orchestration decisions |
-| `DecisionRecord` | C1 → logs | Why it decided: log-probs, entropy, predicted difficulty, and its internal state (for monitoring and RL) |
-| `ModelCard` | → C1 | Describes a model in the pool: price tier, cost, accuracy per task type. The pool is a list, so models can be added without retraining |
+| `TaskRep` | → controller | The step to decide on: prompt, step type, round, the last 2 outcomes (`TraceItem`s), budget, position in the workflow |
+| `Strategy` | controller → | The decision: `model_id`, `halt` (stop / escalate), complexity and confidence. Also `tools`, `memory`, `depth`, `verification`, `topology`, which are fixed defaults in this prototype and are the hooks for later orchestration decisions |
+| `DecisionRecord` | controller → logs | Why it decided: log-probs, entropy, predicted difficulty, and its internal state (for monitoring and RL) |
+| `ModelCard` | → controller | Describes a model in the pool: price tier, cost, accuracy per task type. The pool is a list, so models can be added without retraining |
 
-`controller/stub.py` returns a random but valid `Strategy`, so the other components could integrate from day 1.
+`controller/stub.py` returns a random but valid `Strategy`, for testing integrations before a trained model exists.
 
 ---
 
-## 4. Inside the controller (C1)
+## 4. Inside the controller
 
 ### 4.1 One decision, step by step
 
