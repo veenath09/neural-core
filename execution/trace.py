@@ -34,6 +34,7 @@ class ExecutionStep:
 
     status: ExecutionStatus
     error_type: str | None = None
+    node_name: str | None = None
 
 
 @dataclass(frozen=True)
