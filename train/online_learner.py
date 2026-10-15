@@ -56,6 +56,29 @@ class OnlineLearner:
 
         return torch.stack(losses).mean()
 
+    def train_branching_step(
+        self,
+        heads,
+        optimizer,
+        z_h: torch.Tensor,
+        actions: dict[str, torch.Tensor],
+        returns: torch.Tensor,
+    ) -> float:
+        optimizer.zero_grad()
+
+        values = heads(z_h.detach())
+
+        loss = self.branching_loss(
+        values=values,
+        actions=actions,
+        returns=returns,
+        )
+
+        loss.backward()
+        optimizer.step()
+
+        return float(loss.detach().item())
+
     def update(
         self,
         reward: float,

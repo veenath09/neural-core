@@ -94,3 +94,53 @@ def test_monte_carlo_loss_updates_branching_heads():
 
     for parameter in heads.parameters():
         assert parameter.grad is not None
+
+def test_online_step_updates_branching_head_weights():
+    torch.manual_seed(0)
+
+    heads = BranchingValueHeads(
+        d=128,
+        dimensions={
+            "memory": 3,
+            "depth": 3,
+        },
+    )
+
+    learner = OnlineLearner()
+
+    optimizer = torch.optim.SGD(
+        heads.parameters(),
+        lr=0.1,
+    )
+
+    z_h = torch.randn(2, 128)
+
+    actions = {
+        "memory": torch.tensor([0, 2]),
+        "depth": torch.tensor([1, 0]),
+    }
+
+    returns = torch.tensor([0.8, 0.4])
+
+    before = [
+        parameter.detach().clone()
+        for parameter in heads.parameters()
+    ]
+
+    loss = learner.train_branching_step(
+        heads=heads,
+        optimizer=optimizer,
+        z_h=z_h,
+        actions=actions,
+        returns=returns,
+    )
+
+    after = list(heads.parameters())
+
+    changed = any(
+        not torch.allclose(old, new)
+        for old, new in zip(before, after)
+    )
+
+    assert changed
+    assert loss >= 0.0
