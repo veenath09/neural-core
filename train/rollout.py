@@ -49,6 +49,7 @@ class RolloutOutput:
     log: list[dict] = field(default_factory=list)
     residuals: list[list[tuple[str, float]]] = field(default_factory=list)
     decision_states: list[list[torch.Tensor]] = field(default_factory=list)
+    decision_actions: list[list[dict[str, int | str | None]]] = field(default_factory=list)
 
 
 def rollout(
@@ -86,6 +87,9 @@ def rollout(
     # Each controller decision stores its 128-d z_h decision state here.
     decision_states: list[list[torch.Tensor]] = [
         [] for _ in range(n)
+    ]
+    decision_actions: list[list[dict[str, int | str | None]]] = [
+    [] for _ in range(n)
     ]
 
     while True:
@@ -258,6 +262,10 @@ def rollout(
                         or list(range(ep.n_models)),
                         tau,
                     )
+                decision_actions[i].append({
+                    "phase": "choose",
+                    "model": int(m),
+                    "halt": None,})
 
                 states[i] = ep.play(s, m)
                 continue
@@ -300,6 +308,11 @@ def rollout(
                     options,
                     tau,
                 )
+
+            decision_actions[i].append({
+                "phase": "halt",
+                "model": int(m2) if m2 is not None else None,
+                "halt": "escalate" if m2 is not None else "stop",})
 
             states[i] = (
                 ep.play(s, m2)
@@ -351,4 +364,5 @@ def rollout(
         log=log,
         residuals=residuals,
         decision_states=decision_states,
+        decision_actions=decision_actions,
     )

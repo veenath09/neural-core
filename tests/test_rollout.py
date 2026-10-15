@@ -92,3 +92,31 @@ def test_rollout_collects_decision_states():
 
         for state in episode_states:
             assert state.shape == (128,)
+
+def test_rollout_collects_actions_aligned_with_decision_states():
+    world, eps = world_and_episodes(4)
+    model = tiny_model("full").eval()
+
+    with torch.no_grad():
+        out = rollout(model, eps, world)
+
+    assert len(out.decision_actions) == len(eps)
+
+    for states, actions in zip(out.decision_states, out.decision_actions):
+        assert len(actions) == len(states)
+        assert len(actions) > 0
+
+        for action in actions:
+            assert action["phase"] in {"choose", "halt"}
+
+            if action["phase"] == "choose":
+                assert isinstance(action["model"], int)
+                assert action["halt"] is None
+
+            else:
+                assert action["halt"] in {"stop", "escalate"}
+
+                if action["halt"] == "stop":
+                    assert action["model"] is None
+                else:
+                    assert isinstance(action["model"], int)
