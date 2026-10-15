@@ -239,6 +239,9 @@ class OnlineConfig:
     canary_episodes: int = 500
     canary_tol: float = 0.05
     monitor_window: int = 200
+    # published checkpoints kept on disk (oldest deleted); None keeps all. Keeping every v{n}.pt (~3 MB each,
+    # one per update) filled the disk during the simulated experiments.
+    keep_versions: int | None = 3
 
 
 def online_loss(trace: RLTrace, behaviour: torch.Tensor, c_teacher: torch.Tensor, baseline, cfg: OnlineConfig,
@@ -365,6 +368,10 @@ class OnlineLearner:
             self._published = self._snapshot()
         self.version += 1
         torch.save(self._published, self.out_dir / f"v{self.version}.pt")
+        if self.cfg.keep_versions is not None:
+            stale = self.out_dir / f"v{self.version - self.cfg.keep_versions}.pt"
+            if stale.exists():
+                stale.unlink()
         row = {"update": self.updates, "loss": float(loss.detach()), "grad_norm": grad_norm, "lr": self.lr,
                "policy_version": self.version, "batch": len(batch), "alarms": alarms} | stats
         with (self.out_dir / "log.jsonl").open("a") as f:

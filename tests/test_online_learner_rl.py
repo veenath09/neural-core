@@ -69,6 +69,16 @@ def test_update_fires_every_16_sample_episodes(tmp_path):
     assert (tmp_path / "v1.pt").exists() and (tmp_path / "log.jsonl").exists()
 
 
+def test_only_the_last_versions_are_kept_on_disk(tmp_path):
+    world, eps = world_and_episodes(16)
+    model = tiny_model("full")
+    learner = _learner(model, world, tmp_path, cfg=OnlineConfig(update_every=2, replay_size=0, keep_versions=3))
+    for log in _logs(model, world, eps, "sample"):
+        learner.observe(log)
+    assert learner.version == 8
+    assert sorted(int(p.stem[1:]) for p in tmp_path.glob("v*.pt")) == [6, 7, 8]
+
+
 def test_importance_ratio_is_clipped(tmp_path):
     world, eps = world_and_episodes(16)
     model = tiny_model("full")
