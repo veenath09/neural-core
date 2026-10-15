@@ -1,10 +1,17 @@
+import torch
+import torch.nn.functional as F
+
+
 class OnlineLearner:
     def __init__(self, gamma: float = 1.0):
         self.episode_count = 0
         self.gamma = gamma
 
-    def monte_carlo_returns(self, reward: float, n_decisions: int) -> list[float]:
-        """Return the observed terminal reward to each decision in the episode."""
+    def monte_carlo_returns(
+        self,
+        reward: float,
+        n_decisions: int,
+    ) -> list[float]:
         if n_decisions < 1:
             raise ValueError("n_decisions must be at least 1")
 
@@ -13,10 +20,27 @@ class OnlineLearner:
             for i in range(n_decisions)
         ]
 
-    def update(self, reward: float, n_decisions: int = 1):
+    def monte_carlo_loss(
+        self,
+        predicted: torch.Tensor,
+        returns: torch.Tensor,
+    ) -> torch.Tensor:
+        if predicted.shape != returns.shape:
+            raise ValueError("predicted and returns must have the same shape")
+
+        return F.mse_loss(predicted, returns)
+
+    def update(
+        self,
+        reward: float,
+        n_decisions: int = 1,
+    ):
         self.episode_count += 1
 
-        returns = self.monte_carlo_returns(reward, n_decisions)
+        returns = self.monte_carlo_returns(
+            reward,
+            n_decisions,
+        )
 
         return {
             "episode": self.episode_count,

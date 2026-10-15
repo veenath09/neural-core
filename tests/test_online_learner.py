@@ -1,4 +1,5 @@
 import pytest
+import torch
 
 from train.online_learner import OnlineLearner
 
@@ -43,3 +44,15 @@ def test_monte_carlo_returns_reject_zero_decisions():
             reward=1.0,
             n_decisions=0,
         )
+
+def test_monte_carlo_loss_matches_observed_return():
+    learner = OnlineLearner()
+
+    predicted = torch.tensor([0.5, 0.7])
+    returns = torch.tensor([0.8, 0.8])
+
+    loss = learner.monte_carlo_loss(predicted, returns)
+
+    expected = ((0.5 - 0.8) ** 2 + (0.7 - 0.8) ** 2) / 2
+
+    assert loss.item() == pytest.approx(expected)
