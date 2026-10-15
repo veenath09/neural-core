@@ -116,7 +116,12 @@ def run_episode(session: ControllerSession, env: StepEnvironment, lam_idx: int, 
     qualities = [step_quality.get(k, 0.0) for k in range(n_steps)]
     if cost_ref is None:
         cost_ref = session.cost_ref
-    rewards = episode_log_rewards(round_costs, qualities, decision_step, LAMS[lam_idx], cost_ref)
+    # A verifier that flips the outcome with known probability f gives E[observed] = f + (1 - 2f) * true, which
+    # shrinks quality differences while costs stay exact: the learner would optimise as if lambda were
+    # lambda / (1 - 2f) (43% higher at f = 0.15) and drift to cheap models. (q - f) / (1 - 2f) is unbiased.
+    flip = float(getattr(env, "verifier_flip_p", 0.0))
+    reward_q = [(q - flip) / (1 - 2 * flip) for q in qualities] if flip else qualities
+    rewards = episode_log_rewards(round_costs, reward_q, decision_step, LAMS[lam_idx], cost_ref)
     for d, r in zip(decisions, rewards):
         d.reward = float(r)
     return EpisodeLog(episode_id=episode_id, ep_type=env.ep_type, lam_idx=int(lam_idx), mode=mode,
@@ -219,15 +224,20 @@ class OnlineConfig:
     clip_grad: float = 1.0
     is_clip: float = 2.0  # importance ratio cap
     distill: float = 0.2  # complexity distillation toward the frozen teacher
+    # label-free anchor on decisions: 0.5 * (logp_now - logp_teacher)^2 on the logged actions (k2 KL estimate).
+    # Without it the shift pilot drifted to cheaper choices at every lambda (no labels live, unlike Part 1's
+    # supervised anchor): +0.03 reward at lambda 2 but -0.02..-0.04 at lambda 0.6-1.0, all CIs excluding 0.
+    kl: float = 0.0  # off by default: the drift's cause was the biased reward (run_episode), not a missing anchor
     canary_every: int = 10  # updates
     canary_episodes: int = 500
     canary_tol: float = 0.05
     monitor_window: int = 200
 
 
-def online_loss(trace: RLTrace, behaviour: torch.Tensor, c_teacher: torch.Tensor, baseline, cfg: OnlineConfig
-                ) -> tuple[torch.Tensor, dict]:
-    """-mean(rho * A * logp) - beta * mean(H) + distill * mean_valid((c - c_teacher)^2), rho capped at is_clip.
+def online_loss(trace: RLTrace, behaviour: torch.Tensor, c_teacher: torch.Tensor, baseline, cfg: OnlineConfig,
+                logp_teacher: torch.Tensor | None = None) -> tuple[torch.Tensor, dict]:
+    """-mean(rho * A * logp) - beta * mean(H) + distill * mean_valid((c - c_teacher)^2)
+    + kl * mean_choice(0.5 * (logp - logp_teacher)^2), rho capped at is_clip.
 
     A = G - b[band, lam], normalised over choice slots (population std), as in Part 1."""
     from train.rl import returns_to_go
@@ -250,9 +260,12 @@ def online_loss(trace: RLTrace, behaviour: torch.Tensor, c_teacher: torch.Tensor
     else:
         pg, ent = zero, zero
         stats = {"mean_rho": 1.0, "max_rho": 1.0, "clipped_frac": 0.0}
+    kl = zero
+    if logp_teacher is not None and choice.any():
+        kl = (0.5 * (trace.logp - logp_teacher.to(device)) ** 2)[choice].mean()
     distill = ((trace.complexity - c_teacher.to(device)) ** 2)[valid].mean() if valid.any() else zero
-    loss = pg - cfg.beta * ent + cfg.distill * distill
-    return loss, stats | {"pg_loss": float(pg.detach()), "distill": float(distill.detach()),
+    loss = pg - cfg.beta * ent + cfg.distill * distill + cfg.kl * kl
+    return loss, stats | {"pg_loss": float(pg.detach()), "distill": float(distill.detach()), "kl": float(kl.detach()),
                           "entropy": float(ent.detach()),
                           "episode_return": float(returns[:, 0].mean()) if returns.shape[1] else 0.0}
 
@@ -319,8 +332,9 @@ class OnlineLearner:
         self.model.train()
         trace, behaviour = replay(self.model, batch, self.log_price_fn)
         with torch.no_grad():
-            c_teacher = replay(self.teacher, batch, self.log_price_fn)[0].complexity
-        loss, stats = online_loss(trace, behaviour, c_teacher, self.baseline, self.cfg)
+            teacher_trace = replay(self.teacher, batch, self.log_price_fn)[0]
+        loss, stats = online_loss(trace, behaviour, teacher_trace.complexity, self.baseline, self.cfg,
+                                  logp_teacher=teacher_trace.logp)
         self.opt.zero_grad()
         loss.backward()
         grad_norm = float(torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.cfg.clip_grad))

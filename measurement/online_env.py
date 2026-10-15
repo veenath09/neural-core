@@ -78,6 +78,11 @@ class SimStepEnv:
         return self._state
 
     @property
+    def verifier_flip_p(self) -> float:
+        """Known flip probability of the quality signal (the simulator's verifier), 0 for ground truth."""
+        return self.episode.flip_p if self.quality_source == "verifier" else 0.0
+
+    @property
     def quality_truth(self) -> float:
         return self.episode.quality(self._state)
 

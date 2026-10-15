@@ -109,6 +109,17 @@ def test_run_episode_rewards_sum_to_episode_reward():
     assert logs[-2].quality == 0.0 and len(logs[-2].decisions) == 1
 
 
+def test_verifier_rewards_are_unbiased_for_true_quality():
+    """Rewards from the 15%-flip verifier, de-biased, average to the rewards from true quality."""
+    world, eps = world_and_episodes(64)
+    model = tiny_model("full")
+    noisy, _ = _run(model, world, eps * 6, "serve", quality_source="verifier")
+    truth, _ = _run(model, world, eps * 6, "serve", quality_source="truth")
+    r_noisy = np.mean([sum(d.reward for d in log.decisions) for log in noisy])
+    r_truth = np.mean([sum(d.reward for d in log.decisions) for log in truth])
+    assert abs(r_noisy - r_truth) < 0.03, (r_noisy, r_truth)
+
+
 def test_serve_mode_logs_are_marked():
     world, eps = world_and_episodes(6)
     model = tiny_model("full")

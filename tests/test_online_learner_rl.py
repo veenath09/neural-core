@@ -169,6 +169,33 @@ def test_canary_compares_with_frozen_start_under_same_cards(tmp_path):
     assert row["alarms"] == [] and row["canary_reference"] == row["canary"]
 
 
+def test_kl_anchor_pulls_decisions_back_to_teacher(tmp_path):
+    from train.online import replay
+
+    world, eps = world_and_episodes(16)
+    model = tiny_model("full")
+    teacher = copy.deepcopy(model)
+    with torch.no_grad():  # the learner has drifted: its policy differs from the teacher's
+        model.heads.lam_adj.bias.add_(torch.tensor([1.5, -1.0]))
+    cfg = OnlineConfig(lr=1e-3, beta=0.0, distill=0.0, kl=1.0, replay_size=0)
+    learner = _learner(model, world, tmp_path, cfg=cfg, teacher=teacher)
+    logs = _logs(model, world, eps, "sample")
+    for log in logs:
+        for d in log.decisions:
+            d.reward = 0.0  # zero advantage: only the anchor moves the weights
+    price = _price_fn(world, load_cost_ref())
+
+    def gap():
+        with torch.no_grad():
+            a, b = replay(model, logs, price)[0], replay(teacher, logs, price)[0]
+        return ((a.logp - b.logp) ** 2)[a.choice].mean()
+
+    before = gap()
+    for log in logs:
+        learner.observe(log)
+    assert gap() < before
+
+
 def test_fresh_logs_give_part1_policy_gradient():
     """With rho = 1 (logs from the current weights), the online PG term equals Part 1's rl_loss."""
     from train.online import online_loss, replay
