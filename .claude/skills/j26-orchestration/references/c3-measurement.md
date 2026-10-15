@@ -41,7 +41,7 @@ C3 builds the ground everyone stands on: the data, the simulator, the oracle and
 | propagation | 20% | mixed prompts; propagation rule applied live |
 | random | 15% | unrelated prompts, mixed sources and difficulty (control) |
 
-- Length uniform 3 to 6. Budget: draw so that about one third of episodes cannot afford the most expensive model on every step (`budget = factor * length * mean_cost_strong`, factor from [0.4, 1.5]).
+- Length uniform 3 to 6. Budget: draw so that about one third of episodes cannot afford the most expensive model on every step (`budget = factor * cost of the strongest model on the listed prompts`, factor uniform in [0.7, 1.6], so P(factor < 1) = 0.3 / 0.9 = 1/3; the earlier range [0.4, 1.5] gave about 55%).
 - Only prompts from the matching split. Save `data/episodes/skeletons_{split}.parquet`.
 - Test: shares within 2% of target; no cross-split prompt ids.
 - Commit: `feat(measurement): episode skeleton generator`
@@ -64,11 +64,11 @@ class Simulator:
 Outcome rules, applied in this order:
 
 1. **Base:** `success(m) = table[prompt, m]`.
-2. **Retry (retry episodes):** if a step's final round fails, the same prompt is inserted as the next step (once per original step).
+2. **Retry (retry episodes):** retry iff the step's final round is flagged by the verifier (`verifier_ok` false); the same prompt is then the next step, at most once per item. Deciding on the verifier, not true correctness, keeps a returning prompt from revealing ground truth. Propagation and scoring still use true correctness.
 3. **Propagation (propagation episodes):** if step i's final round failed with a model of price tier j, then at step i+1 `success(m) = table[prompt, m] and tier(m) > j`.
 4. **Budget:** a round whose cost exceeds `budget_left` is not run; the step scores 0 and the episode ends with status `budget_exhausted`.
 5. **Escalation:** `halt="escalate"` on round 0 runs round 1 on the same step with the next chosen model; both rounds are charged. Round 1 always stops.
-6. **Verifier:** `verifier_ok = success XOR Bernoulli(0.15)` with a per-episode seeded RNG.
+6. **Verifier:** `verifier_ok = success XOR flip`, flip probability 0.15, deterministic per (seed, episode, step, round, model) via a blake2b hash (a CRC32 version produced correlated flips across models, rounds and seeds).
 
 - Quality per step = success of its final round. Cost per round from the table.
 - Test: one hand-written episode per rule with known expected outputs; verifier flip rate within 0.15 plus or minus 0.01 over 10,000 rounds.
@@ -79,6 +79,7 @@ Outcome rules, applied in this order:
 - Build:
   - Per-step oracle: cheapest model with `counterfactual = True`, else cheapest.
   - Exact episode oracle: search over model choices for every step and optional escalation, maximising episode quality then minimising cost (and, for RL plots, maximising quality minus lam times cost). Memoise on `(step_index, budget_left rounded, last failing tier, pending retry)`. At most 6 steps x 4 models x 2 rounds, plus retries: small.
+- Use: the per-step oracle drives the oracle share of the supervised behaviour policy (C2-02); the exact episode oracle is the evaluation ceiling.
 - Test: on 1,000 test episodes the episode oracle is at least as good as always-strong, always-cheap, random and the per-step oracle on every episode.
 - Commit: `feat(measurement): per-step and exact episode oracles`
 

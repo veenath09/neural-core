@@ -60,6 +60,13 @@ These are part of the contract. Changing any of them changes tensor shapes or da
 | Episode mix | correlated 40%, retry 25%, propagation 20%, random 15% |
 | Prompt split | train 72%, val 8%, test 20%, split before building episodes |
 | Seeds | 0, 1, 2 |
+| Core architecture | `mlp` (default, D11) or `attn` (HRM-Text gated attention over six role tokens, D12) |
+| Memory write | once per new round outcome, not once per decision |
+| Gate variants | `cfc` (`full`), `stateless` (`gate_stateless`), `const` (`gate_off`) |
+| Budget factor | U(0.7, 1.6) x cost of the strongest model on the listed prompts (about one third cannot afford the strongest model every step) |
+| Retry trigger | the step's final round is flagged by the verifier (`verifier_ok` false), not true correctness |
+| Weight EMA | warm-up decay min(0.999, (1+t)/(10+t)); validation and checkpoints use the EMA |
+| Loss weights | spec 1.0 / 0.5 / 0.2 (model / halt / complexity); current code sums them 1 / 1 / 1 (open item, fix before the analysis freeze) |
 
 ## 5. Architecture in one page
 
@@ -67,7 +74,7 @@ These are part of the contract. Changing any of them changes tensor shapes or da
 Framework call
   -> C4 builds TaskRep (task, current step, last k trace items, budget, lambda)
   -> C1 decide():
-       observe last TraceItem: surprise -> gate rate -> TTT update of W (once per decision)
+       observe last TraceItem: surprise -> gate rate -> TTT update of W (once per new round outcome)
        encode tokens; H/L core 2 cycles x 3 L-steps with memory readout
        heads on z_H: model (scores a variable pool), halting, complexity (+ later: tools, memory, depth, verification, topology)
        -> Strategy (to C4) + DecisionRecord (to C2)
@@ -80,8 +87,14 @@ Two kinds of controller state, and mixing them up is the most common design erro
 
 | State | Lives for | Updated | Holds |
 |---|---|---|---|
-| `W` TTT fast weights (d x d) | one episode, reset at start | once per decision | compressed history of this task |
+| `W` TTT fast weights (d x d) | one episode, reset at start | once per new round outcome | compressed history of this task |
 | `z_H`, `z_L` | one decision | 2 x 3 inner loop | working state for this choice |
+
+A post-round pass writes that round; a round-2 outcome is written at the next step's first pass; the first pass of an episode writes nothing.
+
+The H update re-injects the task/budget input `h` (`z_H <- H(z_H + z_L + h)`) so the task and budget encoders get gradient under truncated backprop.
+
+The `attn` variant (D12) keeps six role tokens `[task, budget, step, trace-1, trace-2, memory]` as a sequence through gated-attention H/L modules with the same schedule; the heads read the step token.
 
 Full diagrams, module tables and the forward pass are in `references/architecture.md`.
 
@@ -143,7 +156,7 @@ These are the things an examiner will probe. Each one exists because getting it 
 
 1. **Split prompts before building episodes.** A prompt in both train and test episodes is leakage.
 2. **The controller never sees ground truth.** Trace items carry `verifier_ok` (noisy), never true correctness. Rewards use true correctness.
-3. **`context_free` differs from `full` only by masking** trace tokens, budget token and memory readout. Same architecture, data, training. A test asserts its output is invariant to those inputs.
+3. **`context_free` differs from `full` only by masking.** It masks earlier steps' trace items, the task token, the budget token and the memory readout, but keeps the current step's own round-1 item (so within-step escalation stays possible and the random-chain control stays fair). Same architecture, data, training. A test asserts exact output invariance to the masked inputs. The same rule applies to `context_free_attn` via the attention key mask.
 4. **Keep the plain random-chain episodes.** On them `full` should not beat `context_free`. If it does, something leaks.
 5. **Report the oracle line** on every quality-cost plot, using the exact episode oracle.
 6. **Three seeds, mean and 95% CI** for every headline number.
@@ -180,3 +193,38 @@ The research questions, hypotheses, success criteria and statistics are fixed in
 - "Who builds this?": Section 2 table, then the component guide's task list.
 - A result looks too good: check rules 1 to 4 in Section 10 first.
 - A result looks like no gain: check that the simulator's dependency rules actually change oracle labels (inspect retry episodes), and that masking is not applied to `full` by mistake.
+
+## 14. Implementation status (October 2026)
+
+The prototype was built ahead of the planned package split. Where code lives today:
+
+| Planned | Lives today |
+|---|---|
+| C1 `controller/` | `controller/` |
+| C3-01 to C3-06 (`measurement/`) | `data/routerbench.py`, `data/episodes.py`, `data/env.py`, `data/oracle.py` |
+| C3-08 baselines | `eval/policies.py`, `eval/baselines.py` |
+| C2-02, C2-03 (`learning/`) | `train/rollout.py`, `train/train.py` |
+| C4 `execution/` | `execution/` (from PR #1) |
+
+Built: contracts v1 (reduced subset), stub controller, features, encoder, MLP and attention cores, memory with three gates, heads, rollout engine, supervised training with EMA, residual and memory diagnostics, simple baselines.
+
+Missing: `common/` contracts and protocols per `assets/`; the `Controller.decide()`/`observe()`/`reset()` API; `CompositeScorer`/`Score`; the RL stage; contract-version stamping in checkpoints; `stats.py` with bootstrap CIs; calibration and the tau sweep; `RunLogger` metric names; the dashboard; `docs/experiment_log.md` and the `analysis-freeze` tag.
+
+Seed-0 pilot, validation set, supervised stage. **Single seed, indicative only.**
+
+| Config | Trainable params | Quality | Cost / episode (USD) | Decision latency |
+|---|---|---|---|---|
+| `full` | 737,046 | 0.699 | 0.0029 | 1.3 ms |
+| `gate_off` | 726,150 | 0.693 | 0.0030 | |
+| `gate_stateless` | 734,438 | 0.699 | 0.0031 | |
+| `memory_off` | 660,483 | 0.682 | 0.0028 | |
+| `context_free` | 660,483 | 0.685 | 0.0027 | 1.0 ms |
+| `full_attn` | 1,065,494 | 0.697 | 0.0031 | 3.2 ms |
+| `memory_off_attn` | 988,931 | 0.692 | 0.0030 | |
+| `context_free_attn` | 988,931 | 0.692 | 0.0027 | 2.9 ms |
+| Always-strongest | | 0.689 | 0.0070 | |
+| Episode oracle | | 0.924 | 0.0013 | |
+
+Latency: batch 1, laptop CPU, 1 thread, cached task embedding. Embedding a new prompt with bge-small adds about 52 ms.
+
+Comparison rule: headline comparisons are within an architecture family (`full` vs `context_free`; `full_attn` vs `context_free_attn`). The `attn` family has about 45% more parameters and about 2.5x the latency, so any cross-family statement must state that confound.

@@ -10,7 +10,7 @@ controller/             C1
   embed.py              TextEmbedder (frozen bge-small, cached)
   encoder.py            NumericFeaturizer, StepEncoder
   blocks.py             MLPBlock, RMSNorm
-  memory.py             TTTLinearMemory, CfCGate, SigmoidGate, ConstantGate
+  memory.py             TTTLinearMemory, CfCGate, StatelessGate, ConstantGate
   core.py               HModule, LModule, HRMCore (schedule, truncated backprop)
   heads.py              ModelScoringHead, HaltingHead, ComplexityHead (+ Phase 2 heads)
   calibrate.py          temperature fitting
@@ -79,7 +79,7 @@ docs/                   design documents, experiment_log.md, decision_log.md
 ## Naming
 
 - ids: `episode_id` = `{split}-{type}-{index:06d}`; `step_id` = `{episode_id}/{step_index}`; rounds are a separate integer, never baked into `step_id`.
-- Config names: `full`, `gate_off`, `gate_sigmoid`, `memory_off`, `context_free`. Use these exact strings in files, tables and plots.
+- Config names: `full`, `gate_off`, `gate_stateless`, `memory_off`, `context_free`, `full_attn`, `memory_off_attn`, `context_free_attn`. Use these exact strings in files, tables and plots.
 - Tensor shape symbols (in docstrings): B batch, d width, e text dim, k trace length, P pool size, U tools offered, F capability size, S step types.
 
 ## Style

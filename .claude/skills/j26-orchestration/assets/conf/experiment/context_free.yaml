@@ -1,2 +1,2 @@
 name: context_free
-controller: {context: query_only}   # masks trace, budget and memory readout
+controller: {context: query_only}   # masks earlier trace, task, budget and memory readout

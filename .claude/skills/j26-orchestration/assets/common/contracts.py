@@ -188,7 +188,7 @@ class EpisodeSkeleton:
 @dataclass(slots=True)
 class CheckpointMeta:
     checkpoint_id: str
-    config_name: str                 # full | gate_off | gate_sigmoid | memory_off | context_free
+    config_name: str                 # full | gate_off | gate_stateless | memory_off | context_free | *_attn
     stage: Stage
     seed: int
     parent_id: str | None

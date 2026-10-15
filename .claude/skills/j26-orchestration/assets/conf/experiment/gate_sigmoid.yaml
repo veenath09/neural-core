@@ -1,2 +1,0 @@
-name: gate_sigmoid
-controller: {gate: sigmoid}

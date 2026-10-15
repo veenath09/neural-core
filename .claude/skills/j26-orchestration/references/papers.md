@@ -67,18 +67,18 @@ These narrow the gap statement: conditioning on state per step is no longer new 
 |---|---|---|---|
 | [10] | Wang et al., Hierarchical Reasoning Model, arXiv:2506.21734 | Slow H / fast L modules, hierarchical convergence, ACT halting | Basis of the core; our H reads the task, L reads execution |
 | [11] | Ge, Liao, Poggio, HRM: Perspectives and Misconceptions, arXiv:2510.00355 | Halting saves compute rather than improving accuracy; hierarchy untested with different inputs | We claim economy of effort; specialisation probe tests the different-input case |
-| [28] | Wang et al., HRM-Text: Efficient Pretraining Beyond Scaling, arXiv:2605.20613 | Separate H/L parameters at scale; MagicNorm; backprop-horizon warmup; halting named as a natural complement | Source of `core.py` schedule; our halting prices monetary cost |
-| | Jolicoeur-Martineau, Less is More: Recursive Reasoning with Tiny Networks (TRM) | Small recursive reasoner | Considered and dropped as a configuration |
+| [28] | Wang et al., HRM-Text: Efficient Pretraining Beyond Scaling, arXiv:2605.20613 | Separate H/L parameters at scale; MagicNorm; backprop-horizon warmup; gated self-attention; halting named as a natural complement | Source of `core.py` schedule and of the `attn` variant's gated-attention blocks (`attention.py`); our halting prices monetary cost |
+| | Jolicoeur-Martineau, Less is More: Recursive Reasoning with Tiny Networks (TRM), arXiv:2510.04871 | Small recursive reasoner; MLPs beat attention on small fixed contexts; 1-step gradients are weak; weight EMA 0.999 | Considered and dropped as a configuration; source of the MLP-core choice, the fixed `z_L` init and the EMA (D11) |
 
 ## 6. Architecture: memory and continuous-time networks
 
 | Ref | Paper | Use | Our position |
 |---|---|---|---|
 | [12] | Sun et al., Learning to (Learn at Test Time): RNNs with Expressive Hidden States, ICML 2025, arXiv:2407.04620 | TTT-Linear: hidden state as a model trained online | Our episode memory W |
-| [13] | Behrouz, Zhong, Mirrokni, Titans: Learning to Memorize at Test Time, arXiv:2501.00663 | Surprise-gated memory updates | Closest prior to our gated memory; `gate_sigmoid` ablation tests whether the CfC form adds anything |
+| [13] | Behrouz, Zhong, Mirrokni, Titans: Learning to Memorize at Test Time, arXiv:2501.00663 | Surprise-gated memory updates; forgetting toward a prior | Closest prior to our gated memory; we take its forgetting term (no momentum); `gate_stateless` ablation tests whether the CfC form adds anything |
 | [8] | Hasani et al., Liquid Time-constant Networks, AAAI 2021, arXiv:2006.04439 | Input-dependent time constant, bounded state | Liquid property of the gate |
 | [9] | Hasani et al., Closed-form Continuous-time Neural Networks, Nature Machine Intelligence 2022, arXiv:2106.13898 | Closed form, no ODE solver | Gate cheap enough to run every decision |
-| [6] | Vaswani et al., Attention Is All You Need, NeurIPS 2017 | Background | MLP blocks chosen over attention for the prototype |
+| [6] | Vaswani et al., Attention Is All You Need, NeurIPS 2017 | Background | MLP blocks are the default core; the `attn` variant (D12) uses HRM-Text gated attention over six role tokens |
 | [7] | Cho et al., RNN Encoder-Decoder, EMNLP 2014 | Background | GRU baseline considered and dropped |
 
 ## 7. Halting and calibration

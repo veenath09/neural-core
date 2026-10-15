@@ -19,14 +19,15 @@ Expected direction is stated; magnitudes are not predicted in advance because no
 |---|---|---|---|
 | RQ1 | Does conditioning on workflow state improve the quality-cost trade-off over context-free routing? | H1: `full` has larger frontier area than `context_free` on correlated, retry and propagation episodes, and no difference on random chains | O1, O2 |
 | RQ2 | Does the episode memory contribute beyond the explicit trace? | H2: `full` beats `memory_off`, with a larger gap on longer episodes (5 to 6 steps), where history exceeds the k = 2 trace | O3 split by length |
-| RQ3a | Does an adaptive update rate help? | H3a: `full` and `gate_sigmoid` both beat `gate_off` | O3 |
-| RQ3b | Does the liquid (CfC) form matter beyond surprise-gating? | Exploratory, no directional prediction. `full` vs `gate_sigmoid` is reported either way; equality means the gain comes from surprise-gating (as in Titans) and the CfC form is a defensible, not decisive, choice | O3 |
+| RQ3a | Does an adaptive update rate help? | H3a: `full` and `gate_stateless` both beat `gate_off` | O3 |
+| RQ3b | Does the liquid (CfC) form matter beyond surprise-gating? | Exploratory, no directional prediction. `full` vs `gate_stateless` is reported either way; equality means the gain comes from surprise-gating (as in Titans) and the CfC form is a defensible, not decisive, choice. The memory may be called "liquid-gated" only if `full` > `gate_stateless` | O3 |
 | RQ4 | Does episode-level RL improve over myopic supervised labels? | H4: RL beats supervised on budget-tight episodes; small or no difference elsewhere | O5 |
 | RQ5 | Does halting allocate effort sensibly? | H5: escalation rate rises with difficulty band and falls as budget fraction drops | O7 |
 | RQ6 | Is confidence calibrated, including under workload shift? | H6: ECE after temperature scaling is lower than uncalibrated; ECE on the shifted set rises but stays below the uncalibrated value | O6 |
 | RQ7 | Can new models be used without retraining? | H7: in leave-one-model-out, adding the held-out card at test time recovers most of the quality of a controller trained with it | O11 |
 | RQ8 | Do the H and L modules specialise when they read different inputs? | Exploratory: H state predicts task-level variables better than L; L predicts execution-level variables better than H; both above an untrained control | specialisation probe |
 | RQ9 | How does the controller compare with existing routers, including an LLM used as a router? | H9: the controller matches or beats the RouteLLM-style router at equal cost; the LLM-as-router may reach similar quality but at a much higher total cost once its routing calls are counted | O4 |
+| RQ10 | Does the core architecture matter? | Exploratory architecture ablation: `mlp` vs `attn` (gated attention over role tokens, D12). The context effect is tested within each family (`full` vs `context_free`; `full_attn` vs `context_free_attn`). Any cross-family statement must state the confound: the attn family has about 45% more parameters and about 2.5x the latency | O3, O8, O10 |
 
 ## 2. Success criteria
 
@@ -49,6 +50,7 @@ A refuted hypothesis is still a result. Report it with the same care as a suppor
 - **Within a seed:** paired bootstrap over test episodes (10,000 resamples) for the difference in the metric. Gives a CI per seed.
 - **Across seeds:** mean of the three per-seed differences with a t-based 95% CI (df = 2). Headline numbers use this.
 - **Multiple comparisons:** the ablation family (H2, H3a, and the RQ3b comparison) uses Holm correction.
+- **Architecture families:** headline comparisons stay within a family (`mlp` or `attn`); `mlp` vs `attn` is an exploratory ablation reported with its parameter and latency confound.
 - **Frontier area:** trapezoidal area under quality vs cost between the always-cheapest and always-strongest costs, after interpolating each policy's curve onto a common grid of 20 cost points.
 - **Matched cost:** quality interpolated at the 25th, 50th and 75th percentiles of the cheapest-to-strongest cost range.
 - Implement all of this once, in `measurement/stats.py`, used by both the dashboard and `make_figures.py`.
@@ -80,7 +82,7 @@ This guards against choosing the analysis that flatters the result after seeing 
 
 ```markdown
 ## 2026-10-20 seed-0 pilot, supervised, all configs
-Runs: full-s0, gate_off-s0, gate_sigmoid-s0, memory_off-s0, context_free-s0
+Runs: full-s0, gate_off-s0, gate_stateless-s0, memory_off-s0, context_free-s0, full_attn-s0, memory_off_attn-s0, context_free_attn-s0
 Commit: <hash>  Data version: rb_v1  Scorer: s1
 Observed: <key numbers from the dashboard>
 Surprises: <anything unexpected>

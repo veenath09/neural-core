@@ -24,7 +24,7 @@ The controller's memory `W` carries across decisions within an episode. So **tra
   - `succeeds[m]` for every pool model,
   - halting label: 1 if the round failed and some strictly more expensive affordable model succeeds, else 0,
   - complexity label: difficulty band / 4 given history.
-- Behaviour policy per step: oracle 50%, uniform random 25%, current model 25% (oracle in epoch 1). Labels are for every model regardless of which one the behaviour policy picked.
+- Behaviour policy per step: per-step oracle 50%, uniform random 25%, current model 25% (oracle instead of the model in epoch 1); the random source escalates with probability 0.3. The exact episode oracle is the evaluation ceiling, not part of the mixture. Labels are for every model regardless of which one the behaviour policy picked.
 - Episodes are regenerated each epoch from the same skeletons, so the current-model share tracks the model as it improves (limits exposure bias).
 - Commit: `feat(learning): rollout worker with mixed behaviour policy and counterfactual labels`
 
@@ -42,14 +42,19 @@ class SupervisedTrainer:
               Episodes are unrolled in order so gradients pass through W.
               Passes the truncated-backprop horizon (2 -> 5 over first 20%) to the core.
               Early stop on val loss, patience 3. Fits the calibration temperature at the end.
+              EMA of weights, warm-up decay min(0.999, (1+t)/(10+t)); validation
+              and checkpoints use the EMA weights.
     """
 ```
+
+- EMA warm-up: a fixed 0.999 left about 21% of the random init in the averaged weights after a 1,580-step run, so the decay warms up from (1+t)/(10+t).
+- Loss weights: the spec is 1.0 / 0.5 / 0.2 (above); the current code (`train/rollout.py`) sums the three terms 1 / 1 / 1. Open item: fix before the analysis freeze.
 
 - Test: loss decreases on the 200-prompt fixture in 2 epochs; checkpoint loads.
 - Commit: `feat(learning): supervised trainer`
 
 ### C2-04 Config sweep runner
-- Build: `scripts/train.py experiment=<name> seed=<s>` for `full`, `gate_off`, `gate_sigmoid`, `memory_off`, `context_free`; seeds 0, 1, 2.
+- Build: `scripts/train.py experiment=<name> seed=<s>` for `full`, `gate_off`, `gate_stateless`, `memory_off`, `context_free`, and the attention family `full_attn`, `memory_off_attn`, `context_free_attn`; seeds 0, 1, 2.
 - Commit: `feat(learning): experiment sweep runner`
 
 ## Phase 1: RL

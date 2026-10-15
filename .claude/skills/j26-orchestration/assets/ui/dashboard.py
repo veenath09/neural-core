@@ -118,7 +118,7 @@ with tabs[2]:
                          width="stretch")
 
         st.subheader("O3 Ablations")
-        ab = fr[fr["config"].isin(["full", "gate_off", "gate_sigmoid", "memory_off", "context_free"])]
+        ab = fr[fr["config"].isin(["full", "gate_off", "gate_stateless", "memory_off", "context_free"])]
         if not ab.empty:
             st.dataframe(seed_ci(ab, ["config", "operating_pt"], "quality"), width="stretch",
                          hide_index=True)

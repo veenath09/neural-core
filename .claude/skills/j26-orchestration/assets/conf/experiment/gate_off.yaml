@@ -1,2 +1,2 @@
 name: gate_off
-controller: {gate: constant}
+controller: {gate: const}

@@ -1,0 +1,2 @@
+name: gate_stateless
+controller: {gate: stateless}

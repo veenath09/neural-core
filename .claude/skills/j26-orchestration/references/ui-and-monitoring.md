@@ -95,7 +95,7 @@ Writes `results/<eval_id>/predictions.parquet` (schema in `data-and-storage.md`)
 | Alarm | Condition | Likely cause |
 |---|---|---|
 | Loss not finite | NaN or inf in any loss | TTT update exploding: clip rate times update, lower lr |
-| Gate collapsed | `gate_rate_std < 0.01` for 1,000 steps (CfC or sigmoid configs) | Gate saturated; check surprise scale and init |
+| Gate collapsed | `gate_rate_std < 0.01` for 1,000 steps (CfC or stateless configs) | Gate saturated; check surprise scale and init |
 | Memory exploding | `W_norm_mean` up more than 10x from start | Missing clip or normalisation in the TTT step |
 | Entropy collapse | `entropy_model < 0.05` in RL before update 1,000 | Beta too low or advantages too large |
 | Val regression | `val_frontier_area` below the supervised checkpoint by more than 5% | RL instability; safety guard should roll back |

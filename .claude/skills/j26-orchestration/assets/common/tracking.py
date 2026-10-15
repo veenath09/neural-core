@@ -30,7 +30,7 @@ class RunLogger:
         root: str | os.PathLike,
         run_id: str,
         component: str,          # C1 | C2 | C3 | C4
-        config_name: str,        # full | gate_off | gate_sigmoid | memory_off | context_free | baseline name
+        config_name: str,        # full | gate_off | gate_stateless | memory_off | context_free | *_attn | baseline name
         stage: str,              # supervised | rl | eval | data
         seed: int,
         config: dict[str, Any],

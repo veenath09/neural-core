@@ -10,7 +10,8 @@ What each output is evidence for (research questions, hypotheses, success criter
 |---|---|---|
 | `full` | proposed controller | C1, trained by C2 |
 | `context_free` | same model, context masked (decisive comparison) | C1, C2 |
-| `gate_off`, `gate_sigmoid`, `memory_off` | ablations | C1, C2 |
+| `gate_off`, `gate_stateless`, `memory_off` | ablations | C1, C2 |
+| `full_attn`, `memory_off_attn`, `context_free_attn` | architecture ablation (gated-attention core, D12); compared within family | C1, C2 |
 | Always-strongest, always-cheapest, random | simple baselines | C3-08 |
 | RouteLLM-style router | literature context-free router | C3-10 |
 | LLM-as-router | prompted frontier model, its routing cost included | C3-11 |
@@ -43,7 +44,7 @@ All headline numbers: mean and 95% confidence interval over 3 seeds.
 | O5 | Supervised vs RL table | what episode-level optimisation adds, especially on budget-pressure episodes |
 | O6 | ECE on test and shifted test | calibration and its robustness |
 | O7 | Escalation vs difficulty and vs budget | halting behaves sensibly |
-| O8 | Residual plot | two-timescale core is computing, not stalled |
+| O8 | Residual plot | two-timescale core is computing, not stalled (attn: residuals averaged over valid tokens only) |
 | O9 | Surprise trace for one episode | failure, surprise spike, gate opening, escalation |
 | O10 | Latency table | overhead requirement (under 5%) |
 | O11 | Leave-one-model-out | new model added with no retraining |
@@ -58,7 +59,8 @@ All headline numbers: mean and 95% confidence interval over 3 seeds.
 | `full` beats `context_free` on random chains too | leakage | check masking test and split |
 | No gain anywhere | dependencies not changing labels, or memory not trained | inspect retry episodes' oracle labels; confirm episodes are unrolled in order during training |
 | `full` equals `memory_off` | memory unused | check `W` actually changes across steps; check k=2 not larger |
-| `full` equals `gate_sigmoid` | surprise-gating helps, CfC form not decisive | report honestly; it is still a result |
+| `full` equals `gate_stateless` | surprise-gating helps, CfC form not decisive | report honestly; it is still a result; do not call the memory "liquid-gated" |
+| `full_attn` differs from `full` | architecture effect, confounded by about 45% more parameters and about 2.5x latency | report within-family context gaps as the headline; state the confound for any cross-family claim |
 | Test far above val | leakage | re-check split disjointness |
 
 ## Matched-cost comparison

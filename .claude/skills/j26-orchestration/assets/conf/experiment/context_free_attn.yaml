@@ -1,0 +1,2 @@
+name: context_free_attn
+controller: {arch: attn, context: query_only}   # masks earlier trace, task, budget and memory readout via the key mask
