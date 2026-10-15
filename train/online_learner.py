@@ -100,6 +100,39 @@ class OnlineLearner:
 
         return states, returns
 
+    def prepare_rollout(
+        self,
+        decision_states: list[list[torch.Tensor]],
+        rewards: list[float],
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        if len(decision_states) != len(rewards):
+            raise ValueError(
+                "decision_states and rewards must have the same length"
+        )
+
+        state_batches = []
+        return_batches = []
+
+        for episode_states, reward in zip(
+            decision_states,
+            rewards,
+        ):
+            states, returns = self.prepare_episode(
+                decision_states=episode_states,
+                    reward=reward,
+            )
+
+            state_batches.append(states)
+            return_batches.append(returns)
+
+        if not state_batches:
+            raise ValueError("rollout must contain at least one episode")
+
+        return (
+            torch.cat(state_batches, dim=0),
+            torch.cat(return_batches, dim=0),
+        )
+
     def update(
         self,
         reward: float,

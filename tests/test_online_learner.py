@@ -162,3 +162,31 @@ def test_prepare_episode_links_states_to_observed_reward():
     assert states.shape == (3, 128)
     assert returns.shape == (3,)
     assert returns.tolist() == pytest.approx([0.8, 0.8, 0.8])
+
+def test_prepare_rollout_links_each_episode_to_its_reward():
+    learner = OnlineLearner(gamma=1.0)
+
+    decision_states = [
+        [
+            torch.randn(128),
+            torch.randn(128),
+        ],
+        [
+            torch.randn(128),
+        ],
+    ]
+
+    rewards = [0.8, 0.4]
+
+    states, returns = learner.prepare_rollout(
+        decision_states=decision_states,
+        rewards=rewards,
+    )
+
+    assert states.shape == (3, 128)
+    assert returns.shape == (3,)
+    assert returns.tolist() == pytest.approx([
+        0.8,
+        0.8,
+        0.4,
+    ])
