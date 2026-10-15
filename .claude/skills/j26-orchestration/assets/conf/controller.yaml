@@ -1,0 +1,19 @@
+# Contract v1 controller settings. Changing shape-affecting values needs a contract bump.
+d: 128
+text_encoder: BAAI/bge-small-en-v1.5
+text_dim: 384
+trace_k: 2
+h_cycles: 2
+l_steps: 3
+arch: mlp              # mlp | attn (D12: gated attention over six role tokens)
+n_heads: 4             # attn only
+blocks_per_module: 2
+mlp_expansion: 4
+gate: cfc              # cfc | stateless | const
+memory: ttt_linear     # ttt_linear | none
+context: full          # full | query_only
+heads: [model, halting, complexity]   # Phase 2 adds: tools, memory, depth, verification, topology
+max_rounds: 2
+bp_min_steps: 2
+bp_max_steps: 5
+bp_warmup_frac: 0.2

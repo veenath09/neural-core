@@ -83,3 +83,57 @@ def test_full_model_reads_context():
     with torch.no_grad():
         assert not torch.allclose(m(b, m.init_memory(3)).model_logits,
                                   m(perturb_context(b), m.init_memory(3)).model_logits)
+
+
+ATTN = ["full_attn", "memory_off_attn", "context_free_attn"]
+
+
+def test_attn_configs_exist_and_use_attention():
+    for name in ATTN:
+        assert CONFIGS[name].arch == "attn"
+    assert CONFIGS["context_free_attn"].context_free and not CONFIGS["context_free_attn"].memory
+    assert all(CONFIGS[n].arch == "mlp" for n in ["full", "gate_off", "gate_stateless", "memory_off", "context_free"])
+
+
+def test_attn_parameter_count():
+    n = n_parameters(make_model("full_attn"))
+    print(f"\nfull_attn controller: {n:,} trainable parameters")
+    assert 800_000 < n < 1_500_000
+
+
+def test_context_free_attn_ignores_task_budget_and_earlier_steps():
+    m = make_model("context_free_attn").eval()
+    b = sample_batch()
+    stronger = replace(perturb_context(b),
+                       trace_model=torch.where(b.trace_earlier, torch.full_like(b.trace_model, 3), b.trace_model))
+    with torch.no_grad():
+        assert torch.allclose(m(b).model_logits, m(stronger).model_logits, atol=1e-5)
+        assert torch.allclose(m(b).halt_logit, m(stronger).halt_logit, atol=1e-5)
+
+
+def test_context_free_attn_still_sees_current_steps_round_one():
+    m = make_model("context_free_attn").eval()
+    b = sample_batch()
+    flipped = replace(b, trace_feats=b.trace_feats.clone())
+    flipped.trace_feats[1, 0, 0] = -flipped.trace_feats[1, 0, 0]
+    with torch.no_grad():
+        assert not torch.allclose(m(b).halt_logit[1], m(flipped).halt_logit[1])
+
+
+def test_attn_absent_trace_slots_do_not_matter():
+    m = make_model("full_attn").eval()
+    b = sample_batch()
+    absent = ~b.trace_present
+    noisy = replace(b, trace_feats=torch.where(absent[..., None], torch.rand_like(b.trace_feats) * 9, b.trace_feats),
+                    trace_row=torch.where(absent, torch.full_like(b.trace_row, 8), b.trace_row))
+    with torch.no_grad():
+        assert torch.allclose(m(b, m.init_memory(3)).model_logits, m(noisy, m.init_memory(3)).model_logits, atol=1e-5)
+
+
+def test_full_attn_reads_context_and_memory():
+    m = make_model("full_attn").eval()
+    b = sample_batch()
+    with torch.no_grad():
+        out = m(b, m.init_memory(3))
+        assert not torch.allclose(out.model_logits, m(perturb_context(b), m.init_memory(3)).model_logits)
+    assert out.z_h.shape == (3, 128) and out.stats["rate"].shape == (3,)

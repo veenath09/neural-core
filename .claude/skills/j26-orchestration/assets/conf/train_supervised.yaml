@@ -1,0 +1,10 @@
+optimizer: adamw
+lr: 3.0e-4
+weight_decay: 0.01
+schedule: cosine
+batch_episodes: 256
+epochs: 20
+early_stop_patience: 3
+behaviour: {oracle: 0.50, random: 0.25, current: 0.25}   # current = oracle in epoch 1
+loss_weights: {model: 1.0, halting: 0.5, complexity: 0.2}
+seeds: [0, 1, 2]
