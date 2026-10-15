@@ -76,3 +76,19 @@ def test_record_logs_memory_writes_and_residuals():
         out = rollout(tiny_model("full").eval(), eps, world, record=True)
     assert out.log and {"episode_id", "step_index", "rate", "surprise", "alpha", "verifier_ok"} <= set(out.log[0])
     assert out.residuals and len(out.residuals[0]) == 8
+
+
+def test_rollout_collects_decision_states():
+    world, eps = world_and_episodes(4)
+    model = tiny_model("full").eval()
+
+    with torch.no_grad():
+        out = rollout(model, eps, world)
+
+    assert len(out.decision_states) == len(eps)
+
+    for episode_states in out.decision_states:
+        assert len(episode_states) > 0
+
+        for state in episode_states:
+            assert state.shape == (128,)
