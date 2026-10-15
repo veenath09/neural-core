@@ -79,6 +79,27 @@ class OnlineLearner:
 
         return float(loss.detach().item())
 
+    def prepare_episode(
+        self,
+        decision_states: list[torch.Tensor],
+        reward: float,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        if not decision_states:
+            raise ValueError("decision_states must not be empty")
+
+        states = torch.stack(decision_states)
+
+        returns = torch.tensor(
+            self.monte_carlo_returns(
+                reward=reward,
+                n_decisions=len(decision_states),
+        ),
+        dtype=states.dtype,
+        device=states.device,
+    )
+
+        return states, returns
+
     def update(
         self,
         reward: float,

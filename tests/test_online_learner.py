@@ -144,3 +144,21 @@ def test_online_step_updates_branching_head_weights():
 
     assert changed
     assert loss >= 0.0
+
+def test_prepare_episode_links_states_to_observed_reward():
+    learner = OnlineLearner(gamma=1.0)
+
+    decision_states = [
+        torch.randn(128),
+        torch.randn(128),
+        torch.randn(128),
+    ]
+
+    states, returns = learner.prepare_episode(
+        decision_states=decision_states,
+        reward=0.8,
+    )
+
+    assert states.shape == (3, 128)
+    assert returns.shape == (3,)
+    assert returns.tolist() == pytest.approx([0.8, 0.8, 0.8])
