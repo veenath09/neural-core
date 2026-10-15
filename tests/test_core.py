@@ -1,4 +1,5 @@
 import torch
+import pytest
 
 from controller.core import HLCore, ReasoningModule, bp_schedule, bp_split
 
@@ -50,3 +51,63 @@ def test_horizon_controls_which_l_calls_build_a_graph():
     with torch.no_grad():
         core(torch.randn(2, 32), torch.randn(2, 32), bp_steps=5)
     assert calls == [False] * 6
+
+
+def test_attn_core_shapes_and_record():
+    core = HLCore(d=32, arch="attn")
+    x = torch.randn(3, 6, 32)
+    mask = torch.ones(3, 6, dtype=torch.bool)
+    z, rec = core(x, x, record=True, key_mask=mask)
+    assert z.shape == (3, 6, 32)
+    assert [k for k, _ in rec] == ["L", "L", "L", "H", "L", "L", "L", "H"]
+
+
+def test_attn_core_uses_same_gradient_horizon():
+    core = HLCore(d=32, arch="attn")
+    calls = []
+    forward = core.L.forward
+
+    def spy(inp, key_mask):
+        calls.append(torch.is_grad_enabled())
+        return forward(inp, key_mask)
+
+    core.L.forward = spy
+    x = torch.randn(2, 6, 32)
+    core(x, x, bp_steps=4, key_mask=torch.ones(2, 6, dtype=torch.bool))
+    assert calls == [False, False, False, False, True, True]
+
+
+def test_attn_core_requires_key_mask():
+    core = HLCore(d=32, arch="attn")
+    x = torch.randn(1, 6, 32)
+    with pytest.raises(ValueError, match="key_mask"):
+        core(x, x)
+
+
+def test_unknown_arch_is_rejected():
+    with pytest.raises(ValueError, match="arch"):
+        HLCore(d=32, arch="rnn")
+
+
+def test_attn_core_residual_diagnostics_ignore_masked_tokens():
+    torch.manual_seed(0)
+    core = HLCore(d=32, arch="attn")
+    x = torch.randn(2, 6, 32)
+    mask = torch.ones(2, 6, dtype=torch.bool)
+    mask[0, 4:] = False
+    mask[1, 5:] = False
+
+    # h = x, so z_h starts as x; recompute the first L call by hand.
+    z_l0 = core.zL_init.expand_as(x)
+    with torch.no_grad():
+        expected_new = core.L(z_l0 + x + x, mask)
+    r = (expected_new - z_l0).norm(dim=-1)
+    expected_valid_only = (r * mask).sum().item() / mask.sum().item()
+    expected_all_tokens = r.mean().item()
+    assert expected_valid_only != pytest.approx(expected_all_tokens)
+
+    with torch.no_grad():
+        _, rec = core(x, x, record=True, key_mask=mask)
+    first_l_value = rec[0][1]
+    assert first_l_value == pytest.approx(expected_valid_only)
+    assert first_l_value != pytest.approx(expected_all_tokens)
