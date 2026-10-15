@@ -28,8 +28,12 @@ VERIFIER_QUALITY_THRESHOLD = 0.5
 @dataclass(frozen=True)
 class RoundOutcome:
     trace_item: TraceItem | None
-    quality: float
+    quality: float  # the verdict the controller sees and acts on (escalate when flagged)
     cost_usd: float
+    # An independent check of the same answer, for rewards only. The decision verdict is selected by the
+    # controller's own escalation (a flagged round is re-rolled, a passed one kept), so it reads high and a
+    # learner rewarded with it learns to escalate just to re-roll the checker. None = same as quality.
+    audit_quality: float | None = None
 
 
 @dataclass(frozen=True)
@@ -116,10 +120,18 @@ class SimStepEnv:
             return RoundOutcome(trace_item=None, quality=0.0, cost_usd=0.0)
         item = after.trace[-1]
         if self.quality_source == "truth":
-            quality = float(after.cur_correct)
+            quality = audit = float(after.cur_correct)
         else:
             quality = float(item.verifier_ok)
-        return RoundOutcome(trace_item=item, quality=quality, cost_usd=item.cost_usd)
+            audit = float(after.cur_correct != self._audit_flip(before, m))
+        return RoundOutcome(trace_item=item, quality=quality, cost_usd=item.cost_usd, audit_quality=audit)
+
+    def _audit_flip(self, s: EnvState, m: int) -> bool:
+        """Independent flip draw (same rate as the decision verifier, different key)."""
+        ep = self.episode
+        key = f"audit|{ep.seed}|{ep.skeleton.episode_id}|{s.step_index}|{s.rounds + 1}|{m}"
+        u = int.from_bytes(hashlib.blake2b(key.encode(), digest_size=8).digest()) / 2**64
+        return u < ep.flip_p
 
     def end_step(self) -> None:
         if self._state.done:

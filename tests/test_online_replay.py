@@ -110,14 +110,16 @@ def test_run_episode_rewards_sum_to_episode_reward():
 
 
 def test_verifier_rewards_are_unbiased_for_true_quality():
-    """Rewards from the 15%-flip verifier, de-biased, average to the rewards from true quality."""
+    """On the same episodes, rewards from the 15%-flip verifier (audited, de-biased) average to the rewards
+    of what actually happened (true quality of the final answers)."""
     world, eps = world_and_episodes(64)
     model = tiny_model("full")
-    noisy, _ = _run(model, world, eps * 6, "serve", quality_source="verifier")
-    truth, _ = _run(model, world, eps * 6, "serve", quality_source="truth")
-    r_noisy = np.mean([sum(d.reward for d in log.decisions) for log in noisy])
-    r_truth = np.mean([sum(d.reward for d in log.decisions) for log in truth])
-    assert abs(r_noisy - r_truth) < 0.03, (r_noisy, r_truth)
+    scorer = CompositeScorer.from_yaml("conf/score.yaml")
+    logs, envs = _run(model, world, eps * 6, "sample", quality_source="verifier")
+    r_noisy = np.mean([sum(d.reward for d in log.decisions) for log in logs])
+    r_truth = np.mean([episode_reward(scorer, env.quality_truth, log.cost_usd, log.n_steps, LAMS[log.lam_idx])
+                       for log, env in zip(logs, envs)])
+    assert abs(r_noisy - r_truth) < 0.02, (r_noisy, r_truth)
 
 
 def test_serve_mode_logs_are_marked():

@@ -345,3 +345,31 @@ def test_episode_log_rewards_matches_per_decision_step_reward_formula():
     expected1 = step_reward(0.0, round_costs[1], n, lam, cost_ref) + step_quality[1] / n
     assert rewards[0] == pytest.approx(expected0)
     assert rewards[1] == pytest.approx(expected1)
+
+
+def test_audit_reward_is_unbiased_under_escalate_on_flag():
+    """The decision verdict is selected by escalation (flagged rounds get re-rolled), so it reads high; an
+    independent audit verdict of the final answer, de-biased, matches true quality."""
+    import numpy as np
+
+    from tests.test_rollout import world_and_episodes
+
+    world, eps = world_and_episodes(200)
+    f = 0.15
+    decision, audit, truth = [], [], []
+    for ep in eps * 3:
+        env = SimStepEnv(ep, quality_source="verifier")
+        while env.current_step() is not None:
+            out = env.play(world.model_ids[0], 1)
+            if out.trace_item is None:
+                break
+            if not out.trace_item.verifier_ok:  # escalate when flagged
+                out2 = env.play(world.model_ids[3], 2)
+                out = out2 if out2.trace_item is not None else out
+            decision.append(out.quality)
+            audit.append(out.audit_quality)
+            truth.append(float(env.state.cur_correct))
+            env.end_step()
+    debias = lambda x: (np.mean(x) - f) / (1 - 2 * f)  # noqa: E731
+    assert debias(decision) > np.mean(truth) + 0.05  # the bug: selection makes the decision verdict read high
+    assert abs(debias(audit) - np.mean(truth)) < 0.02

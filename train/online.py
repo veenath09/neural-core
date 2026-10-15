@@ -64,6 +64,10 @@ def _episode_id(env: StepEnvironment) -> str:
     return getattr(env, "episode_id", "live")
 
 
+def _audit(out) -> float:
+    return out.quality if out.audit_quality is None else out.audit_quality
+
+
 def _seed(episode_id: str, policy_version: int) -> int:
     key = f"{episode_id}|{policy_version}".encode()
     return int.from_bytes(hashlib.blake2b(key, digest_size=4).digest(), "little")
@@ -78,7 +82,8 @@ def run_episode(session: ControllerSession, env: StepEnvironment, lam_idx: int, 
                   state_dict=state_dict, policy_version=policy_version, seed=_seed(episode_id, policy_version))
     round_costs: list[float] = []  # one per decision: the call it triggered
     decision_step: list[int] = []
-    step_quality: dict[int, float] = {}
+    step_quality: dict[int, float] = {}  # the verdict the controller saw (monitoring, EpisodeLog.quality)
+    step_reward_q: dict[int, float] = {}  # independent audit verdict of the step's final answer (rewards)
     used: list[tuple[str, int, float, float]] = []
     step = 0
     while (spec := env.current_step()) is not None:
@@ -87,10 +92,10 @@ def run_episode(session: ControllerSession, env: StepEnvironment, lam_idx: int, 
         round_costs.append(out.cost_usd)
         decision_step.append(step)
         if out.trace_item is None:  # unaffordable round 1: the episode ends, this step scores 0
-            step_quality[step] = 0.0
+            step_quality[step] = step_reward_q[step] = 0.0
             break
         used.append((first.model_id, spec.step_type, out.quality, out.cost_usd))
-        quality = out.quality
+        quality, audit = out.quality, _audit(out)
         second = session.after_round(out.trace_item, bonus_fn())  # HALT decision
         decision_step.append(step)
         if second is None:
@@ -99,12 +104,12 @@ def run_episode(session: ControllerSession, env: StepEnvironment, lam_idx: int, 
             out2 = env.play(second.model_id, 2)
             round_costs.append(out2.cost_usd)
             if out2.trace_item is None:  # unaffordable escalation: the episode ends, this step scores 0
-                step_quality[step] = 0.0
+                step_quality[step] = step_reward_q[step] = 0.0
                 break
             used.append((second.model_id, spec.step_type, out2.quality, out2.cost_usd))
             session.after_round(out2.trace_item, bonus_fn())  # round 2: recorded, no decision
-            quality = out2.quality
-        step_quality[step] = quality
+            quality, audit = out2.quality, _audit(out2)
+        step_quality[step], step_reward_q[step] = quality, audit
         session.end_step()
         env.end_step()
         step += 1
@@ -119,8 +124,10 @@ def run_episode(session: ControllerSession, env: StepEnvironment, lam_idx: int, 
     # A verifier that flips the outcome with known probability f gives E[observed] = f + (1 - 2f) * true, which
     # shrinks quality differences while costs stay exact: the learner would optimise as if lambda were
     # lambda / (1 - 2f) (43% higher at f = 0.15) and drift to cheap models. (q - f) / (1 - 2f) is unbiased.
+    # Rewards use the audit verdict (independent of the escalation decision), then de-bias it.
     flip = float(getattr(env, "verifier_flip_p", 0.0))
-    reward_q = [(q - flip) / (1 - 2 * flip) for q in qualities] if flip else qualities
+    audits = [step_reward_q.get(k, 0.0) for k in range(n_steps)]
+    reward_q = [(q - flip) / (1 - 2 * flip) for q in audits] if flip else audits
     rewards = episode_log_rewards(round_costs, reward_q, decision_step, LAMS[lam_idx], cost_ref)
     for d, r in zip(decisions, rewards):
         d.reward = float(r)
