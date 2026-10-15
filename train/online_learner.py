@@ -30,6 +30,32 @@ class OnlineLearner:
 
         return F.mse_loss(predicted, returns)
 
+    def branching_loss(
+        self,
+        values: dict[str, torch.Tensor],
+        actions: dict[str, torch.Tensor],
+        returns: torch.Tensor,
+    ) -> torch.Tensor:
+        losses = []
+
+        for name, branch_values in values.items():
+            if name not in actions:
+                raise ValueError(f"missing action for branch {name!r}")
+
+            chosen = branch_values.gather(
+                1,
+                actions[name].unsqueeze(1),
+            ).squeeze(1)
+
+            losses.append(
+                F.mse_loss(chosen, returns)
+            )
+
+        if not losses:
+            raise ValueError("values must contain at least one branch")
+
+        return torch.stack(losses).mean()
+
     def update(
         self,
         reward: float,

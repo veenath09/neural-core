@@ -2,6 +2,7 @@ import pytest
 import torch
 
 from train.online_learner import OnlineLearner
+from train.branching_heads import BranchingValueHeads
 
 
 def test_learner_updates_episode_count():
@@ -56,3 +57,40 @@ def test_monte_carlo_loss_matches_observed_return():
     expected = ((0.5 - 0.8) ** 2 + (0.7 - 0.8) ** 2) / 2
 
     assert loss.item() == pytest.approx(expected)
+
+
+
+
+def test_monte_carlo_loss_updates_branching_heads():
+    heads = BranchingValueHeads(
+        d=128,
+        dimensions={
+            "memory": 3,
+            "depth": 3,
+        },
+    )
+
+    learner = OnlineLearner()
+
+    z_h = torch.randn(2, 128)
+    values = heads(z_h)
+
+    actions = {
+        "memory": torch.tensor([0, 2]),
+        "depth": torch.tensor([1, 0]),
+    }
+
+    returns = torch.tensor([0.8, 0.4])
+
+    loss = learner.branching_loss(
+        values=values,
+        actions=actions,
+        returns=returns,
+    )
+
+    loss.backward()
+
+    assert loss.requires_grad
+
+    for parameter in heads.parameters():
+        assert parameter.grad is not None
