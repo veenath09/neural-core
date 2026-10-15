@@ -1,0 +1,11 @@
+dataset: withmartian/routerbench
+shots: 0
+pool_size: 4
+binary_sources_only: true
+split: {train: 0.72, val: 0.08, test: 0.20}
+episode_len: [3, 6]
+mix: {correlated: 0.40, retry: 0.25, propagation: 0.20, random: 0.15}
+budget_tight_frac: 0.33
+verifier_flip_p: 0.15
+n_episodes: {train: 20000, val: 2000, test: 5000}
+seed: 1234

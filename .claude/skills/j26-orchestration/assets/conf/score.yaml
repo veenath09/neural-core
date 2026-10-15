@@ -1,0 +1,4 @@
+scorer_version: s1
+mu_latency: 0.0           # latency reported separately in v1
+overspend_penalty: 1.0
+cost_ref: from_train_split  # strongest model's mean step cost, frozen per dataset version
