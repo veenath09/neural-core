@@ -1,24 +1,20 @@
 
 """Execution trace contracts for Pillar 4.
 
-These types describe what actually happened during execution.
-
-They are separate from controller.contracts.TraceItem, which is
-a short controller-history representation.
+Defines the standardized execution data shared across adapters.
 
 Supports:
-- Individual execution steps
-- Execution cost and latency
-- Input and output token counts
-- Execution status and error information
-- Node-level tracing
-- Single-parent dependencies (legacy)
-- Multiple-parent dependencies (parallel workflows)
+- Execution identity and status
+- Model, tool, token, cost and latency records
+- LangGraph and CrewAI node-level tracing
+- Single-parent and multiple-parent dependencies
+- Trace integrity and reliability validation
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from math import isfinite
 from typing import Literal
 
 
@@ -29,7 +25,7 @@ ExecutionStatus = Literal["ok", "error", "timeout"]
 
 @dataclass(frozen=True)
 class ExecutionStep:
-    """One execution step performed by Pillar 4."""
+    """One recorded step in an execution workflow."""
 
     step_index: int
     parent_step: int | None
@@ -45,15 +41,12 @@ class ExecutionStep:
 
     status: ExecutionStatus
 
-    # Error information
     error_type: str | None = None
-
-    # LangGraph node-level tracing (Task 7)
     node_name: str | None = None
 
-    # Multiple dependencies (Task 8)
-    # None means use the legacy parent_step field.
-    # An empty tuple means the node has no parents.
+    # None: use legacy parent_step.
+    # (): root node with no dependencies.
+    # (0, 1): node depends on steps 0 and 1.
     parent_steps: tuple[int, ...] | None = None
 
     @property
@@ -71,7 +64,7 @@ class ExecutionStep:
 
 @dataclass(frozen=True)
 class ExecutionTrace:
-    """Complete trace produced for one executed strategy segment."""
+    """Complete trace produced by one execution."""
 
     execution_id: str
 
@@ -93,15 +86,17 @@ class ExecutionTrace:
 
 
 def validate_execution_step(step: ExecutionStep) -> None:
-    """Validate one execution step and its dependencies."""
+    """Validate an individual execution step."""
 
     errors: list[str] = []
 
-    # Step index validation
+    # 1. Step index
     if step.step_index < 0:
-        errors.append("step_index cannot be negative")
+        errors.append(
+            "step_index cannot be negative"
+        )
 
-    # Legacy single-parent validation
+    # 2. Legacy single-parent dependency
     if step.parent_step is not None:
 
         if step.parent_step < 0:
@@ -114,18 +109,16 @@ def validate_execution_step(step: ExecutionStep) -> None:
                 "parent_step must refer to an earlier execution step"
             )
 
-    # Task 8: Multiple-parent validation
+    # 3. Multiple-parent dependencies
     if step.parent_steps is not None:
 
         parents = step.parent_steps
 
-        # Reject duplicate dependencies
         if len(parents) != len(set(parents)):
             errors.append(
                 "parent_steps contains duplicate parents"
             )
 
-        # Every parent must be an earlier step
         for parent in parents:
 
             if parent < 0:
@@ -138,7 +131,6 @@ def validate_execution_step(step: ExecutionStep) -> None:
                     "every parent must refer to an earlier execution step"
                 )
 
-        # Prevent contradictory dependency formats
         if (
             step.parent_step is not None
             and parents != (step.parent_step,)
@@ -147,7 +139,7 @@ def validate_execution_step(step: ExecutionStep) -> None:
                 "parent_step conflicts with parent_steps"
             )
 
-    # Token validation
+    # 4. Token counts
     if step.input_tokens < 0:
         errors.append(
             "input_tokens cannot be negative"
@@ -158,41 +150,65 @@ def validate_execution_step(step: ExecutionStep) -> None:
             "output_tokens cannot be negative"
         )
 
-    # Cost validation
-    if step.cost_usd < 0:
+    # 5. Cost integrity
+    # NaN and infinity cannot be valid execution costs.
+    if (
+        isinstance(step.cost_usd, bool)
+        or not isinstance(step.cost_usd, (int, float))
+        or not isfinite(step.cost_usd)
+    ):
+        errors.append(
+            "cost_usd must be a finite number"
+        )
+
+    elif step.cost_usd < 0:
         errors.append(
             "cost_usd cannot be negative"
         )
 
-    # Latency validation
-    if step.wall_ms < 0:
+    # 6. Latency integrity
+    # Reject NaN and both positive and negative infinity.
+    if (
+        isinstance(step.wall_ms, bool)
+        or not isinstance(step.wall_ms, (int, float))
+        or not isfinite(step.wall_ms)
+    ):
+        errors.append(
+            "wall_ms must be a finite number"
+        )
+
+    elif step.wall_ms < 0:
         errors.append(
             "wall_ms cannot be negative"
         )
 
-    # Execution status validation
-    if step.status not in ("ok", "error", "timeout"):
+    # 7. Individual execution status
+    valid_statuses = ("ok", "error", "timeout")
+
+    if step.status not in valid_statuses:
         errors.append(
             f"invalid status {step.status!r}"
         )
 
-    # Successful steps must not contain an error
-    if step.status == "ok" and step.error_type is not None:
+    # A successful step must not report an error.
+    if (
+        step.status == "ok"
+        and step.error_type is not None
+    ):
         errors.append(
             "error_type must be None when status is 'ok'"
         )
 
-    # Raise all validation errors together
     if errors:
         raise ValueError("; ".join(errors))
 
 
 def validate_execution_trace(trace: ExecutionTrace) -> None:
-    """Validate a complete execution trace."""
+    """Validate complete execution trace integrity."""
 
     errors: list[str] = []
 
-    # Execution identity
+    # 1. Execution identity
     if not trace.execution_id:
         errors.append(
             "execution_id cannot be empty"
@@ -203,29 +219,36 @@ def validate_execution_trace(trace: ExecutionTrace) -> None:
             "strategy_step_id cannot be empty"
         )
 
-    # Strategy round
+    # 2. Strategy round
     if trace.strategy_round < 1:
         errors.append(
             "strategy_round must be at least 1"
         )
 
-    # Framework
+    # 3. Framework identity
     if not trace.framework:
         errors.append(
             "framework cannot be empty"
         )
 
-    # Trace version
+    # 4. Version compatibility
     if trace.version != EXECUTION_TRACE_VERSION:
         errors.append(
             f"version {trace.version!r} "
             f"!= {EXECUTION_TRACE_VERSION!r}"
         )
 
-    # Validate every execution step
+    # 5. Final execution status
+    valid_statuses = ("ok", "error", "timeout")
+
+    if trace.final_status not in valid_statuses:
+        errors.append(
+            f"invalid final_status {trace.final_status!r}"
+        )
+
+    # 6. Validate all individual steps
     for expected_index, step in enumerate(trace.steps):
 
-        # Step indexes must be consecutive
         if step.step_index != expected_index:
             errors.append(
                 "execution steps must use consecutive "
@@ -242,6 +265,53 @@ def validate_execution_trace(trace: ExecutionTrace) -> None:
                 f"{step.step_index}: {exc}"
             )
 
-    # Raise all trace errors together
+    # 7. Successful executions must contain steps
+    if (
+        trace.final_status == "ok"
+        and not trace.steps
+    ):
+        errors.append(
+            "successful execution trace cannot be empty"
+        )
+
+    # 8. Successful executions cannot contain
+    # failed or timed-out steps.
+    if trace.final_status == "ok":
+
+        if any(
+            step.status != "ok"
+            for step in trace.steps
+        ):
+            errors.append(
+                "successful execution trace "
+                "cannot contain failed or timed-out steps"
+            )
+
+    # 9. Failed executions must record at least
+    # one actual failed step.
+    if trace.final_status == "error":
+
+        if not any(
+            step.status == "error"
+            for step in trace.steps
+        ):
+            errors.append(
+                "failed execution trace "
+                "must contain a failed step"
+            )
+
+    # 10. Timed-out executions must record
+    # at least one timed-out step.
+    if trace.final_status == "timeout":
+
+        if not any(
+            step.status == "timeout"
+            for step in trace.steps
+        ):
+            errors.append(
+                "timed-out execution trace "
+                "must contain a timed-out step"
+            )
+
     if errors:
         raise ValueError("; ".join(errors))
