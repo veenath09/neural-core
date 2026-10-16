@@ -346,13 +346,12 @@ def rollout(
 
                 allowed_mask[j, row_allowed] = True
 
+                # escalation targets: strictly pricier cards (same as range(cur + 1, M) on a cost-ordered pool)
                 row_options = [
                     k
-                    for k in range(
-                        (s.cur_model if s.cur_model is not None else -1) + 1,
-                        episodes[i].n_models,
-                    )
-                    if world.card_costs[k] <= s.budget_left
+                    for k in range(episodes[i].n_models)
+                    if (s.cur_model is None or world.card_costs[k] > world.card_costs[s.cur_model])
+                    and world.card_costs[k] <= s.budget_left
                 ]
 
                 if row_options:
@@ -511,12 +510,9 @@ def rollout(
 
             options = [
                 k
-                for k in range(
-                    s.cur_model + 1,
-                    ep.n_models,
-                )
-                if world.card_costs[k]
-                <= s.budget_left
+                for k in range(ep.n_models)
+                if world.card_costs[k] > world.card_costs[s.cur_model]
+                and world.card_costs[k] <= s.budget_left
             ]
 
             if rl_mode:

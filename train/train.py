@@ -98,7 +98,8 @@ def load_data(data_dir: Path = DATA_DIR, exclude_models: Sequence[str] = ()) -> 
 
 
 def make_episodes(skeletons: Sequence[Skeleton], world: World) -> list[Episode]:
-    return [Episode(sk, world.table, world.model_ids) for sk in skeletons]
+    """Simulator episodes on this world; escalation is to a strictly pricier card (same rule as the rollout)."""
+    return [Episode(sk, world.table, world.model_ids, model_costs=world.card_costs) for sk in skeletons]
 
 
 def evaluate(model, skeletons: Sequence[Skeleton], world: World, tau: float = 0.5, batch_size: int = 512,

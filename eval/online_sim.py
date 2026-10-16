@@ -185,7 +185,8 @@ def stream(init_dir: Path, skeletons: Sequence[Skeleton], data: Data, cfg: Onlin
         lam_idx = int(lam_idx_fn(i))
         mode = "sample" if rng.random() < explore_share else "serve"
         state, version = learner.published() if learner else (None, 0)
-        log = run_episode(session, SimStepEnv(Episode(sk, full.table, full.model_ids)), lam_idx, mode, pool.bonus,
+        episode = Episode(sk, full.table, full.model_ids, model_costs=pool.costs())  # cards fixed within an episode
+        log = run_episode(session, SimStepEnv(episode), lam_idx, mode, pool.bonus,
                           state, version)
         used = [u[0] for u in log.used]
         row = {"episode": i, "ep_type": log.ep_type, "lam": LAMS[lam_idx], "mode": mode, "quality": log.quality,

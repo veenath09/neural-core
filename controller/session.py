@@ -131,7 +131,8 @@ class ControllerSession:
             return None
 
         costs, avail = self._pool()
-        options = avail & (costs <= self.budget_left) & (np.arange(len(costs)) > self.cur_model)
+        # escalation is to a strictly pricier card, not a higher index: joiners are appended whatever their price
+        options = avail & (costs <= self.budget_left) & (costs > costs[self.cur_model])
         out, view, logits = self._forward(HALT, bonus, costs)
         options_t = torch.as_tensor(options, device=self.device)[None]
         with torch.no_grad():

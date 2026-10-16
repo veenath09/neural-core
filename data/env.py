@@ -2,7 +2,11 @@
 
 States are immutable, so the episode oracle can search the simulator exactly.
 A step is one or two rounds: play a model, optionally escalate to a strictly
-more expensive one, then stop. The last round's answer is the step's answer."""
+more expensive one, then stop. The last round's answer is the step's answer.
+
+"More expensive" is by pool index (pools are cost-ordered) unless the episode is given
+model_costs (the card costs), in which case it is a strictly higher model_cost: a pool that
+grows at run time appends joiners at the end whatever their price."""
 
 from __future__ import annotations
 
@@ -39,7 +43,7 @@ class EnvState:
 
 class Episode:
     def __init__(self, skeleton: Skeleton, table: OutcomeTable, model_ids: Sequence[str],
-                 flip_p: float = VERIFIER_FLIP_P, seed: int = 0):
+                 flip_p: float = VERIFIER_FLIP_P, seed: int = 0, model_costs: np.ndarray | None = None):
         self.skeleton = skeleton
         self.table = table
         self.model_ids = list(model_ids)
@@ -48,6 +52,9 @@ class Episode:
         self.rows = np.array([table.index[p] for p in skeleton.prompt_ids])
         self.n_steps = len(self.rows)
         self.n_models = table.n_models
+        self.model_costs = None if model_costs is None else np.asarray(model_costs, dtype=float)
+        if self.model_costs is not None and self.model_costs.shape != (self.n_models,):
+            raise ValueError(f"model_costs shape {self.model_costs.shape} != ({self.n_models},)")
 
     def initial_state(self) -> EnvState:
         return EnvState(budget_left=self.skeleton.budget_usd)
@@ -68,10 +75,16 @@ class Episode:
     def affordable(self, s: EnvState, m: int) -> bool:
         return self.cost(s, m) <= s.budget_left
 
+    def pricier(self, cur: int) -> list[int]:
+        """Models an escalation from cur may use: strictly higher model_cost, or higher index without model_costs."""
+        if self.model_costs is None:
+            return list(range(cur + 1, self.n_models))
+        return [m for m in range(self.n_models) if self.model_costs[m] > self.model_costs[cur]]
+
     def escalation_options(self, s: EnvState) -> list[int]:
         if s.done or s.rounds != 1:
             return []
-        return [m for m in range(s.cur_model + 1, self.n_models) if self.affordable(s, m)]
+        return [m for m in self.pricier(s.cur_model) if self.affordable(s, m)]
 
     def legal_actions(self, s: EnvState) -> list[Action]:
         if s.done:
@@ -80,7 +93,7 @@ class Episode:
             return [("play", m) for m in range(self.n_models)]
         stop: list[Action] = [("stop", None)]
         if s.rounds < MAX_ROUNDS:
-            return stop + [("play", m) for m in range(s.cur_model + 1, self.n_models)]
+            return stop + [("play", m) for m in self.pricier(s.cur_model)]
         return stop
 
     def _verifier_ok(self, s: EnvState, m: int, correct: bool) -> bool:
@@ -95,7 +108,7 @@ class Episode:
             raise ValueError("episode is over")
         if s.rounds >= MAX_ROUNDS:
             raise ValueError("no rounds left in this step")
-        if s.rounds == 1 and m <= s.cur_model:
+        if s.rounds == 1 and m not in self.pricier(s.cur_model):
             raise ValueError("escalation must use a strictly more expensive model")
         cost = self.cost(s, m)
         if cost > s.budget_left:  # D3: round not run, step scores 0, episode ends
