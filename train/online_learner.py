@@ -1,3 +1,4 @@
+from numpy.ma import choose
 import torch
 import torch.nn.functional as F
 
@@ -183,6 +184,34 @@ class OnlineLearner:
             torch.cat(return_batches, dim=0),
         )
 
+    def split_actions(
+        self,
+        actions: list[dict],
+    ) -> tuple[list[tuple[int, int]], list[tuple[int, int]]]:
+        choose = []
+        halt = []
+
+        for index, action in enumerate(actions):
+            phase = action["phase"]
+
+            if phase == "choose":
+                choose.append(
+                (index, int(action["model"]))
+            )
+
+            elif phase == "halt":
+                halt_value = 1 if action["halt"] == "escalate" else 0
+                halt.append(
+                    (index, halt_value)
+            )
+
+            else:
+                raise ValueError(
+                    f"unknown decision phase {phase!r}"
+            )
+
+        return choose, halt
+    
     def update(
         self,
         reward: float,

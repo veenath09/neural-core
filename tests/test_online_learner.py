@@ -252,3 +252,25 @@ def test_prepare_rollout_batch_aligns_states_actions_and_returns():
         0.8,
         0.4,
     ])
+
+def test_split_actions_separates_choose_and_halt():
+    learner = OnlineLearner()
+
+    actions = [
+        {"phase": "choose", "model": 1, "halt": None},
+        {"phase": "halt", "model": None, "halt": "stop"},
+        {"phase": "choose", "model": 2, "halt": None},
+        {"phase": "halt", "model": 3, "halt": "escalate"},
+    ]
+
+    choose, halt = learner.split_actions(actions)
+
+    assert choose == [
+        (0, 1),
+        (2, 2),
+    ]
+
+    assert halt == [
+        (1, 0),   # stop
+        (3, 1),   # escalate
+    ]
