@@ -57,8 +57,7 @@ from torch.optim import AdamW
 from controller.model import CONFIGS
 from data.episodes import Skeleton
 from data.routerbench import DATA_DIR
-from measurement.rl_reward import LAMS, cost_ref_for, episode_reward, load_cost_ref  # re-exported; do not duplicate
-from measurement.scorer import CompositeScorer
+from measurement.rl_reward import LAMS, cost_ref_for, episode_reward, load_cost_ref, scorer_for  # load_cost_ref re-exported
 from train.baseline import BucketedBaseline
 from train.rollout import LOSS_WEIGHTS, RLTrace, World, rollout
 from train.safety import SafetyGuard
@@ -217,10 +216,10 @@ def rl_update(
 def evaluate_rl(model, skeletons: list[Skeleton], world: World, lam_idx: int, cost_ref: float,
                 batch_size: int = 512) -> dict:
     """Greedy ("serve") rollout of skeletons at a single lambda, scored with the composite
-    scorer at that lambda. by_type groups quality/cost/reward by ep_type; complexity_mae is
+    scorer at that lambda and the given cost_ref (the pool's own, as in the rollout). by_type groups quality/cost/reward by ep_type; complexity_mae is
     mean |sigmoid(complexity_logit) - band_target| over valid decision slots."""
     model.eval()
-    scorer = CompositeScorer.from_yaml("conf/score.yaml")
+    scorer = scorer_for(cost_ref)
     lam = LAMS[lam_idx]
     qualities, costs, rewards, ep_types = [], [], [], []
     firsts, n_halt, n_escalate = [], 0, 0

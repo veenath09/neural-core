@@ -25,8 +25,7 @@ import math
 import numpy as np
 import torch
 
-from measurement.rl_reward import LAMS, episode_reward
-from measurement.scorer import CompositeScorer
+from measurement.rl_reward import LAMS, episode_reward, scorer_for
 from train.rl import evaluate_rl
 from train.rollout import rollout
 from train.train import make_episodes
@@ -55,7 +54,7 @@ def set_policy_init(model, price: tuple[float, float], halt: tuple[float, float]
 def sample_reward(model, skeletons, world, cost_ref, lam_idx: int, seed: int = 0, batch_size: int = 512) -> float:
     """Mean episode reward of the sample-mode policy at one lambda (no gradient)."""
     model.eval()
-    scorer = CompositeScorer.from_yaml("conf/score.yaml")
+    scorer = scorer_for(cost_ref)
     rng, rewards = np.random.default_rng(seed), []
     with torch.no_grad():
         for start in range(0, len(skeletons), batch_size):

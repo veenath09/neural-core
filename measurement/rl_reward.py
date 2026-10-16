@@ -22,6 +22,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Sequence
+from functools import lru_cache
 from pathlib import Path
 
 import pandas as pd
@@ -50,6 +51,27 @@ def cost_ref_for(data_dir: str | Path | None) -> float:
     if path is not None and path.exists():
         return float(json.loads(path.read_text())["cost_ref_usd"])
     return load_cost_ref()
+
+
+@lru_cache(maxsize=None)
+def scorer_for(cost_ref: float) -> CompositeScorer:
+    """Composite scorer at this pool's per-step cost reference (cost_ref_for(data_dir)), built once per value.
+
+    Every RL reward (training rollouts, evaluate_rl, calibration, canary, online paired evaluation) must use
+    the same cost_ref as log_price: the RouterBench value in conf/score.yaml is only right for that pool."""
+
+    return CompositeScorer(
+        {
+            "version": 1,
+            "cost_ref_usd": float(cost_ref),
+            "cost_ref_model": "pool cost_ref",
+            "cost_ref_split": "train",
+            "cost_ref_statistic": "mean_per_step_cost",
+            "train_prompt_count": 1,
+            "latency_ref_ms": None,
+            "latency_source": "unavailable_in_routerbench",
+        }
+    )
 
 
 def episode_reward(
@@ -158,18 +180,7 @@ def lam_oracle_points(
         return pd.DataFrame(json.loads(cache.read_text()))
 
     episodes = [Episode(sk, table, model_ids) for sk in skeletons]
-    scorer = CompositeScorer(
-        {
-            "version": 1,
-            "cost_ref_usd": cost_ref,
-            "cost_ref_model": "lam_oracle_points",
-            "cost_ref_split": "train",
-            "cost_ref_statistic": "mean_per_step_cost",
-            "train_prompt_count": 1,
-            "latency_ref_ms": None,
-            "latency_source": "unavailable_in_routerbench",
-        }
-    )
+    scorer = scorer_for(cost_ref)
 
     rows = []
 

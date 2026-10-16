@@ -335,13 +335,12 @@ if __name__ == "__main__":
 
 def episode_rewards(model, skeletons, world: World, lam_idx: int, cost_ref: float, batch_size: int = 512) -> np.ndarray:
     """Per-episode serve-mode reward at one lambda (greedy, so two models can be compared episode by episode)."""
-    from measurement.rl_reward import episode_reward
-    from measurement.scorer import CompositeScorer
+    from measurement.rl_reward import episode_reward, scorer_for
     from train.rollout import rollout
     from train.train import make_episodes
 
     model.eval()
-    scorer, out = CompositeScorer.from_yaml("conf/score.yaml"), []
+    scorer, out = scorer_for(cost_ref), []
     with torch.no_grad():
         for s in range(0, len(skeletons), batch_size):
             eps = make_episodes(skeletons[s:s + batch_size], world)
