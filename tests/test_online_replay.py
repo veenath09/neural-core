@@ -1,5 +1,7 @@
 """Tests for Part 2 Task 4: run_episode and replay recompute (train/online.py)."""
 
+from dataclasses import replace
+
 import numpy as np
 import pytest
 import torch
@@ -109,17 +111,60 @@ def test_run_episode_rewards_sum_to_episode_reward():
     assert logs[-2].quality == 0.0 and len(logs[-2].decisions) == 1
 
 
+def _tight(eps, factor):
+    """The same episodes with budget * factor and fresh ids (distinct verifier and audit flips)."""
+    return [Episode(Skeleton(f"{ep.skeleton.episode_id}-b{factor}", ep.skeleton.ep_type, ep.skeleton.prompt_ids,
+                             ep.skeleton.budget_usd * factor), ep.table, IDS) for ep in eps]
+
+
 def test_verifier_rewards_are_unbiased_for_true_quality():
-    """On the same episodes, rewards from the 15%-flip verifier (audited, de-biased) average to the rewards
-    of what actually happened (true quality of the final answers)."""
-    world, eps = world_and_episodes(64)
+    """Rewards from the 15%-flip verifier (audited, de-biased) average to the rewards of what actually happened
+    (true quality of the final answers), including episodes that run out of budget. Every episode has its own
+    id, so its flips are independent draws (copies of one episode would repeat the same flips)."""
+    world, eps = world_and_episodes(192)
+    eps = _tight(eps, 0.15) + _tight(eps, 0.2) + eps[:64]
+    assert len({ep.skeleton.episode_id for ep in eps}) == len(eps)
     model = tiny_model("full")
     scorer = CompositeScorer.from_yaml("conf/score.yaml")
-    logs, envs = _run(model, world, eps * 6, "sample", quality_source="verifier")
+    logs, envs = _run(model, world, eps, "sample", quality_source="verifier")
+    assert sum(env.state.step_index < ep.n_steps for env, ep in zip(envs, eps)) > 200  # many budget-cut episodes
     r_noisy = np.mean([sum(d.reward for d in log.decisions) for log in logs])
     r_truth = np.mean([episode_reward(scorer, env.quality_truth, log.cost_usd, log.n_steps, LAMS[log.lam_idx])
                        for log, env in zip(logs, envs)])
     assert abs(r_noisy - r_truth) < 0.02, (r_noisy, r_truth)
+
+
+class _AuditAlwaysPasses(SimStepEnv):
+    """Verifier-sourced env whose audit always reads 1, so a step's reward quality is exactly known."""
+
+    def play(self, model_id, round):
+        out = super().play(model_id, round)
+        return out if out.trace_item is None else replace(out, audit_quality=1.0)
+
+
+def test_noise_correction_leaves_unplayed_steps_at_zero():
+    """Only steps whose final round was played and audited are de-biased; steps never reached, and a step
+    whose round was cut by the budget, are exact zeros (not (0 - f) / (1 - 2f))."""
+    world, eps = world_and_episodes(24)
+    table = world.table
+    cheapest = float(table.cost.min())
+    eps = eps + _tight(eps, 0.2) + [
+        Episode(Skeleton("broke", "random", tuple(table.prompt_ids[:3]), 0.25 * cheapest), table, IDS)]
+    model = tiny_model("full")
+    cost_ref, f = load_cost_ref(), 0.15
+    session = _session(model, world, cost_ref)
+    bonus = np.zeros(len(world.model_ids))
+    cut = 0
+    for k, ep in enumerate(eps):
+        env = _AuditAlwaysPasses(ep, quality_source="verifier")
+        log = run_episode(session, env, k % len(LAMS), "sample", lambda: bonus, None, 0)
+        scored = env.state.step_index  # steps whose final round was played (end_step ran)
+        cut += scored < ep.n_steps
+        lam = LAMS[log.lam_idx]
+        want = scored * (1 - f) / (1 - 2 * f) / ep.n_steps - lam * log.cost_usd / (ep.n_steps * cost_ref)
+        assert sum(d.reward for d in log.decisions) == pytest.approx(want, abs=1e-9), ep.skeleton.episode_id
+    assert cut > 5
+    assert sum(d.reward for d in log.decisions) == 0.0  # "broke": nothing played, nothing spent
 
 
 def test_serve_mode_logs_are_marked():

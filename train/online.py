@@ -84,6 +84,7 @@ def run_episode(session: ControllerSession, env: StepEnvironment, lam_idx: int, 
     decision_step: list[int] = []
     step_quality: dict[int, float] = {}  # the verdict the controller saw (monitoring, EpisodeLog.quality)
     step_reward_q: dict[int, float] = {}  # independent audit verdict of the step's final answer (rewards)
+    audited: set[int] = set()  # steps whose final round was played (a real, noisy audit verdict)
     used: list[tuple[str, int, float, float]] = []
     step = 0
     while (spec := env.current_step()) is not None:
@@ -110,6 +111,7 @@ def run_episode(session: ControllerSession, env: StepEnvironment, lam_idx: int, 
             session.after_round(out2.trace_item, bonus_fn())  # round 2: recorded, no decision
             quality, audit = out2.quality, _audit(out2)
         step_quality[step], step_reward_q[step] = quality, audit
+        audited.add(step)
         session.end_step()
         env.end_step()
         step += 1
@@ -125,9 +127,11 @@ def run_episode(session: ControllerSession, env: StepEnvironment, lam_idx: int, 
     # shrinks quality differences while costs stay exact: the learner would optimise as if lambda were
     # lambda / (1 - 2f) (43% higher at f = 0.15) and drift to cheap models. (q - f) / (1 - 2f) is unbiased.
     # Rewards use the audit verdict (independent of the escalation decision), then de-bias it.
+    # Only steps whose final round was played and audited carry a noisy verdict to de-bias; a step never
+    # reached, or cut short by the budget, scored an exact 0 (no answer), and de-biasing that 0 would charge
+    # it -f / (1 - 2f) (-0.21 at f = 0.15).
     flip = float(getattr(env, "verifier_flip_p", 0.0))
-    audits = [step_reward_q.get(k, 0.0) for k in range(n_steps)]
-    reward_q = [(q - flip) / (1 - 2 * flip) for q in audits] if flip else audits
+    reward_q = [((step_reward_q[k] - flip) / (1 - 2 * flip) if k in audited else 0.0) for k in range(n_steps)]
     rewards = episode_log_rewards(round_costs, reward_q, decision_step, LAMS[lam_idx], cost_ref)
     for d, r in zip(decisions, rewards):
         d.reward = float(r)
