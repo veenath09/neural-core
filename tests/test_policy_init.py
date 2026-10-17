@@ -3,6 +3,7 @@
 import math
 
 import numpy as np
+import pytest
 import torch
 import torch.nn.functional as F
 
@@ -91,3 +92,34 @@ def test_calibration_picks_the_smallest_sharpness_near_serve(tmp_path):
     assert gaps[str(k)] <= 0.02 or k == 10.0
     smaller = [kk for kk in (1.0, 3.0, 10.0) if kk < k]
     assert all(gaps[str(kk)] > 0.02 for kk in smaller)
+
+
+def test_guard_reference_is_the_supervised_start_and_bad_calibration_is_rejected(tmp_path, monkeypatch):
+    import train.policy_init as pi
+    from train.rl import train_rl
+
+    data = tiny_data()
+    train("full", seed=0, epochs=1, batch_size=32, data=data, out_dir=tmp_path, log=lambda row: None)
+    run = tmp_path / "full-s0"
+    supervised = load_model(run, data, strict=False)
+    cost_ref = 1.756663098e-3  # conf/score.yaml (tiny data has no cost_ref.json)
+    expected = {i: evaluate_rl(supervised, data.val[:16], data.world, i, cost_ref)["reward"] for i in range(len(LAMS))}
+    default_bias = supervised.heads.lam_adj.bias.detach().clone()
+
+    def sabotage(model, skeletons, world, cost_ref, **kw):  # only the cheapest (weakest) model, never escalate
+        with torch.no_grad():
+            model.heads.lam_adj.weight.zero_()
+            model.heads.lam_adj.bias.copy_(torch.tensor([50.0, -50.0]))
+        return {"kept_default": False, "default_mean_reward": 0.0, "mean_reward": 0.0, "fit": None,
+                "fitted_price_weight": None, "lams_below_default": [], "sharpness": 1.0, "sharpness_gap": {},
+                "sharpness_at_grid_edge": False}
+
+    monkeypatch.setattr(pi, "calibrate_policy_init", sabotage)
+    rows = []
+    summary = train_rl("full", 0, run, updates=1, batch_size=8, eval_every=1, max_val=16, data=data,
+                       log=rows.append, calibrate_init=True, calibrate_episodes=8, out_dir=tmp_path / "rl")
+    assert {int(k): v for k, v in summary["reference_by_lam"].items()} == pytest.approx(expected)
+    init = [r for r in rows if "calibrated_init" in r][0]
+    assert init["calibrated_init"]["calibration_rejected"] and "calibration_rejected" in init["alarms"]
+    saved = torch.load(tmp_path / "rl" / "model.pt", weights_only=True)
+    assert torch.allclose(saved["heads.lam_adj.bias"], default_bias)  # reverted to the supervised start

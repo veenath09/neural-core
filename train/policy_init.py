@@ -85,7 +85,10 @@ def _rewards(model, skeletons, world, cost_ref, lams) -> dict[int, dict]:
 
 
 def calibrate_policy_init(model, skeletons, world, cost_ref: float, lams=LAMS, grid_w=GRID_W,
-                          grid_h=GRID_H, grid_k=GRID_K) -> dict:
+                          grid_h=GRID_H, grid_k=GRID_K, floor_tol: float | None = 0.05, refits: int = 3) -> dict:
+    """See the module docstring. With floor_tol, a fit that leaves some lambda more than floor_tol below the
+    default start on these skeletons is refitted with 4x weight on the failing lambdas, up to `refits` times
+    (a straight line in ln lambda can miss one end of the grid: the seed-0 pilot lost 0.1 at lambda 2)."""
     lin = model.heads.lam_adj
     default_state = {k: v.clone() for k, v in lin.state_dict().items()}
     default = _rewards(model, skeletons, world, cost_ref, lams)
@@ -103,10 +106,16 @@ def calibrate_policy_init(model, skeletons, world, cost_ref: float, lams=LAMS, g
     x = np.log(np.asarray(lams, dtype=float))
     y_price = np.array([_softplus_inv(best[i]["w"] / lam) for i, lam in enumerate(lams)])
     y_halt = np.array([best[i]["h"] for i in range(len(lams))])
-    b_price, a_price = np.polyfit(x, y_price, 1)
-    b_halt, a_halt = np.polyfit(x, y_halt, 1)
-    set_policy_init(model, price=(float(a_price), float(b_price)), halt=(float(a_halt), float(b_halt)))
-    fitted = _rewards(model, skeletons, world, cost_ref, lams)
+    weights = np.ones(len(lams))
+    for it in range(refits + 1):
+        b_price, a_price = np.polyfit(x, y_price, 1, w=weights)
+        b_halt, a_halt = np.polyfit(x, y_halt, 1, w=weights)
+        set_policy_init(model, price=(float(a_price), float(b_price)), halt=(float(a_halt), float(b_halt)))
+        fitted = _rewards(model, skeletons, world, cost_ref, lams)
+        below = [i for i in range(len(lams)) if fitted[i]["reward"] < default[i]["reward"] - (floor_tol or 0)]
+        if floor_tol is None or not below:
+            break
+        weights[below] *= 4
     fitted_mean = float(np.mean([r["reward"] for r in fitted.values()]))
 
     kept_default = fitted_mean < default_mean
@@ -122,9 +131,11 @@ def calibrate_policy_init(model, skeletons, world, cost_ref: float, lams=LAMS, g
         "mean_reward": default_mean if kept_default else fitted_mean,
         "grid_best": best,
         "fit": {"price": [float(a_price), float(b_price)], "halt": [float(a_halt), float(b_halt)]},
+        "fit_weights": weights.tolist(), "lams_below_default": [] if kept_default else below,
         "per_lam": {i: {"reward": final[i]["reward"], "quality": final[i]["quality"], "cost_usd": final[i]["cost_usd"]}
                     for i in range(len(lams))},
         "fitted_price_weight": [lam * math.log1p(math.exp(raw0(lam))) for lam in lams],
         "sharpness": k,
         "sharpness_gap": gaps,
+        "sharpness_at_grid_edge": k == max(grid_k),
     }

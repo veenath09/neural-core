@@ -33,6 +33,9 @@ Deviation (seed-0 pilot v2): the guard compares val reward, not quality,
 against the supervised start at each lambda, because high-lambda policies
 trade quality for cost by design.
 
+Guard reference (review finding 3): measured on the supervised start BEFORE calibration; a calibrated
+start that fails the guard against it is reverted (alarm "calibration_rejected").
+
 Deviation (seed-0 pilot v3): with calibrate_init, the lambda-adjustment layer's
 starting price weight and halt offset are grid-searched per lambda on training
 episodes and fitted as linear in ln lambda before update 0 (train/policy_init.py),
@@ -335,18 +338,33 @@ def train_rl(config: str, seed: int, init_dir: Path, updates: int = 1000, batch_
     # this first pass) -- unless reference_reward overrides it. With no override, update 0's
     # check below always passes by construction (it's measuring against itself).
     model.eval()
+    # Guard reference (C2-07): the SUPERVISED start's serve-mode val reward per lambda, measured before any
+    # calibration. A calibrated start that is worse than it at some lambda is rejected (alarm below).
+    measured_reference_by_lam = {lam_idx: measure_val(lam_idx)["reward"] for lam_idx in range(len(LAMS))}
+    model.train()
     init_report = None
     if calibrate_init:
         from train.policy_init import calibrate_policy_init  # local: policy_init imports evaluate_rl from here
 
+        supervised_state = copy.deepcopy(model.state_dict())
         init_report = calibrate_policy_init(model, train_sk[:calibrate_episodes], data.world, cost_ref)
+        calibrated_val = {lam_idx: measure_val(lam_idx)["reward"] for lam_idx in range(len(LAMS))}
+        rejected = not SafetyGuard(measured_reference_by_lam, tol=0.05).ok(calibrated_val)
+        init_report["calibrated_val_reward"] = calibrated_val
+        init_report["calibration_rejected"] = rejected
+        if rejected:
+            model.load_state_dict(supervised_state)
         model.train()
         last_good = {"model": copy.deepcopy(model.state_dict()), "baseline": copy.deepcopy(baseline.state_dict())}
         save_best(last_good["model"], last_good["baseline"])
-        log({"calibrated_init": {k: init_report[k] for k in ("kept_default", "default_mean_reward", "mean_reward", "fit",
-                                                               "fitted_price_weight")}})
-    measured_reference_by_lam = {lam_idx: measure_val(lam_idx)["reward"] for lam_idx in range(len(LAMS))}
-    model.train()
+        row = {"calibrated_init": {k: init_report[k] for k in ("kept_default", "default_mean_reward", "mean_reward",
+                                                                 "fit", "fitted_price_weight", "sharpness",
+                                                                 "lams_below_default", "calibration_rejected")}}
+        if rejected:
+            row["alarms"] = ["calibration_rejected"]
+        if init_report["sharpness_at_grid_edge"]:  # sample still far from serve at the largest k tried
+            row.setdefault("alarms", []).append("sharpness_at_grid_edge")
+        log(row)
     guard = SafetyGuard(reference_reward if reference_reward is not None else measured_reference_by_lam, tol=0.05)
     # reference_by_lam is what metrics.json records: the guard's actual per-lambda reference,
     # whether measured here or supplied as an override (a float override applies to every lambda).
