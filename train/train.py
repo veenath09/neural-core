@@ -67,6 +67,7 @@ class Data:
     cards: torch.Tensor
     n_types: int
     data_dir: Path | None = None  # set when loaded from disk; enables the oracle cache
+    exclude_models: tuple[str, ...] = ()  # models left out of this pool (recorded in metrics.json)
 
 
 def exclude_from(prompts, cards: list, exclude_models: Sequence[str]) -> tuple:
@@ -94,7 +95,7 @@ def load_data(data_dir: Path = DATA_DIR, exclude_models: Sequence[str] = ()) -> 
                   {m: i for i, m in enumerate(ids)})
     return Data(world, load_skeletons("train", data_dir), load_skeletons("val", data_dir),
                 torch.from_numpy(np.array(emb)), torch.tensor([c.capability for c in cards]),
-                int(prompts["step_type"].max()) + 1, Path(data_dir))
+                int(prompts["step_type"].max()) + 1, Path(data_dir), tuple(exclude_models))
 
 
 def make_episodes(skeletons: Sequence[Skeleton], world: World) -> list[Episode]:
@@ -223,7 +224,8 @@ def train(config: str, seed: int = 0, epochs: int = 20, batch_size: int = 256, l
             if stale >= patience:
                 break
     summary = {"config": config, "seed": seed, "params": n_parameters(model), "best_val_loss": best,
-               "data_dir": str(data.data_dir or DATA_DIR), "reference": ref,
+               "data_dir": str(data.data_dir or DATA_DIR), "exclude_models": list(data.exclude_models),
+               "reference": ref,
                "model_config": asdict(CONFIGS[config]), "history": history}
     (run_dir / "metrics.json").write_text(json.dumps(summary, indent=2))
     return summary
@@ -234,7 +236,8 @@ def load_model(run_dir: Path, data: Data | None = None, strict: bool = True) -> 
     checkpoint missing heads.lam_adj.* (added for D13 lambda conditioning) still loads;
     any other missing or unexpected key raises RuntimeError."""
     summary = json.loads((Path(run_dir) / "metrics.json").read_text())
-    data = data or load_data(Path(summary.get("data_dir", DATA_DIR)))
+    # rebuild the run's pool, including any models it was trained without (review finding 6)
+    data = data or load_data(Path(summary.get("data_dir", DATA_DIR)), exclude_models=summary.get("exclude_models", ()))
     model = Controller(CONFIGS[summary["config"]], data.embeddings, data.cards, data.n_types)
     state_dict = torch.load(Path(run_dir) / "model.pt", weights_only=True)
     if strict:

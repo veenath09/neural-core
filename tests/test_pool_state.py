@@ -189,3 +189,35 @@ def test_record_handles_depth_cards_and_keeps_extra_features():
     assert cap[4] == pytest.approx((50 * 0.7 + 50 * 1.0) / 100)  # gsm8k (step type 4) updated
     assert cap[5] == pytest.approx(-3.0)  # cost slot: log10 of the running mean cost
     assert cap[6:] == [1.0, 0.5]  # depth features untouched
+
+
+def test_exclude_models_flow_from_metrics(tmp_path, monkeypatch):
+    import json
+
+    import train.rl as rl_module
+    import train.train as train_module
+    from tests.test_train import tiny_data
+    from train.train import Data, load_model, train
+
+    full = tiny_data()
+    ids = list(full.world.model_ids)
+
+    def fake_load_data(data_dir, exclude_models=()):
+        keep = [m for m in ids if m not in exclude_models]
+        from eval.online_sim import subset_data
+
+        d = subset_data(full, keep)
+        return Data(d.world, d.train, d.val, d.embeddings, d.cards, d.n_types, tmp_path, tuple(exclude_models))
+
+    monkeypatch.setattr(train_module, "load_data", fake_load_data)
+    monkeypatch.setattr(rl_module, "load_data", fake_load_data)
+    data = fake_load_data(tmp_path, (ids[3],))
+    train("full", seed=0, epochs=1, batch_size=32, data=data, out_dir=tmp_path, log=lambda row: None)
+    run = tmp_path / "full-s0"
+    assert json.loads((run / "metrics.json").read_text())["exclude_models"] == [ids[3]]
+    assert load_model(run, strict=False).cards.shape[0] == 3  # rebuilt without the excluded model
+    with pytest.raises(ValueError):
+        rl_module.train_rl("full", 0, run, updates=1, exclude_models=(ids[2],))
+    summary = rl_module.train_rl("full", 0, run, updates=1, batch_size=8, eval_every=1, max_val=8,
+                                 out_dir=tmp_path / "rl", log=lambda r: None)
+    assert summary["exclude_models"] == [ids[3]]
