@@ -10,3 +10,4 @@ data/raw/
 data/processed/
 checkpoints/
 hf_cache/
+data/clean/
