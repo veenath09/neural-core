@@ -283,7 +283,8 @@ def experiment_new_models(init_dir: Path, new_models: list[str], out_dir: Path, 
     out = Path(out_dir) / ("new_model_" + ("single" if len(new_models) == 1 else "set"))
     sks = _test_skeletons(data)[:n_episodes]
     frames = [_run_pair(init_dir, sks, data, cfg, out / f"s{seed}", seed, add_model_at={0: joining},
-                        per_model_share=True) for seed in seeds]
+                        per_model_share=True, canary_skeletons=data.val[:cfg.canary_episodes])  # review finding 5
+              for seed in seeds]
     df = pd.concat(frames, ignore_index=True)
     summary = _write(df, out, new_models=True)
     truth = {c.model_id: c.capability[:-1] for c in known}

@@ -83,3 +83,21 @@ def test_paired_eval_is_zero_for_unchanged_weights(tmp_path, monkeypatch):
     monkeypatch.setattr("eval.online_sim._init", lambda d: (d, data, {}))  # tiny data lives in memory
     out = paired_eval(init, tmp_path / "s", data.val[:16])
     assert all(v["diff"] == 0 for v in out["per_lambda"].values()) and not out["learned_worse_somewhere"]
+
+
+def test_new_model_experiment_passes_a_canary(monkeypatch, tmp_path):
+    import eval.online_sim as sim
+
+    seen = {}
+
+    def fake_run_pair(init_dir, sks, data, cfg, out, seed, **kw):
+        seen.update(kw)
+        raise RuntimeError("stop after wiring check")
+
+    data = tiny_data()
+    monkeypatch.setattr(sim, "_init", lambda d: (d, data, {}))
+    monkeypatch.setattr(sim, "_test_skeletons", lambda d: data.train[:4])
+    monkeypatch.setattr(sim, "_run_pair", fake_run_pair)
+    with pytest.raises(RuntimeError):
+        sim.experiment_new_models(tmp_path, [list(data.world.model_ids)[3]], tmp_path, cfg=OnlineConfig(canary_episodes=7))
+    assert len(seen["canary_skeletons"]) == min(7, len(data.val))

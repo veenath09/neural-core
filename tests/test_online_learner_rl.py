@@ -290,3 +290,16 @@ def test_online_improves_on_easy_drift(tmp_path):
     after = _serve_share(model, world1, eps1, 1)
     assert after > 0.8 and after > before, (before, after)
     assert time.time() - t0 < 90
+
+
+def test_make_canary_scores_reward_not_quality():
+    from train.online import make_canary
+    from train.rl import evaluate_rl
+
+    world, eps = world_and_episodes(8)
+    model = tiny_model("full")
+    sks = [e.skeleton for e in eps]
+    canary = make_canary(sks, lambda: world, 1e-4)  # small cost_ref: cost matters, reward != quality
+    got = canary(model)
+    want = {i: evaluate_rl(model, sks, world, i, 1e-4)["reward"] for i in range(len(LAMS))}
+    assert got == pytest.approx(want)

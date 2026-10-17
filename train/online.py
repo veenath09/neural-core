@@ -360,10 +360,10 @@ class OnlineLearner:
         self.updates += 1
         alarms = []
         if self.canary is not None and self.updates % self.cfg.canary_every == 0:
-            quality, reference = self.canary(self.model), self.canary(self.teacher)
+            score, reference = self.canary(self.model), self.canary(self.teacher)
             self.model.train()
-            stats |= {"canary": quality, "canary_reference": reference}
-            if any(q < reference[i] - self.cfg.canary_tol for i, q in quality.items()):
+            stats |= {"canary": score, "canary_reference": reference}
+            if any(v < reference[i] - self.cfg.canary_tol for i, v in score.items()):
                 self._rollback()
                 alarms.append("rollback")
             else:
@@ -403,7 +403,8 @@ class OnlineLearner:
 
 def make_canary(skeletons, world_fn: Callable[[], object], cost_ref: float,
                 cards_fn: Callable[[], torch.Tensor] | None = None) -> Callable:
-    """Serve-mode val quality at every lambda index on a fixed set of simulator skeletons.
+    """Serve-mode val reward at every lambda index on a fixed set of simulator skeletons (reward, not quality:
+    high-lambda policies trade quality for cost by design, as in Part 1's guard; review finding 9).
 
     world_fn rebuilds the simulator world from the non-retired models that have simulator outcomes
     (PoolState.sim_model_ids()); cards_fn gives the matching card rows (pool.capability_tensor()[
@@ -417,7 +418,7 @@ def make_canary(skeletons, world_fn: Callable[[], object], cost_ref: float,
         if cards_fn is not None:
             model.set_cards(cards_fn())
         try:
-            return {i: evaluate_rl(model, skeletons, world, i, cost_ref)["quality"] for i in range(len(LAMS))}
+            return {i: evaluate_rl(model, skeletons, world, i, cost_ref)["reward"] for i in range(len(LAMS))}
         finally:
             model.set_cards(full)
 
