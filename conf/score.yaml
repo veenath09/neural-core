@@ -1,0 +1,17 @@
+
+# Pillar 3 - C3-07 Composite Scorer
+# Frozen reference values calculated from RouterBench train split only.
+
+version: 1
+
+# Mean per-step cost of the most expensive pool model.
+cost_ref_usd: 0.001756663098
+cost_ref_model: "gpt-4-1106-preview"
+cost_ref_split: "train"
+cost_ref_statistic: "mean_per_step_cost"
+train_prompt_count: 19614
+
+# RouterBench contains no measured latency values.
+# A latency reference must be established separately.
+latency_ref_ms: null
+latency_source: "unavailable_in_routerbench"
