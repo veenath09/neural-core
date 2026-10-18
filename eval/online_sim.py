@@ -33,17 +33,21 @@ import pandas as pd
 import torch
 
 from controller.contracts import ModelCard
-from controller.embedding_cache import EmbeddingCache
-from controller.policy import log_price
-from controller.session import ControllerSession
 from data.env import VERIFIER_FLIP_P, Episode
 from data.episodes import BUDGET_FACTOR, EPISODE_TYPES, MAX_STEPS, MIN_STEPS, Skeleton, type_counts
 from data.routerbench import SOURCES, OutcomeTable
 from measurement.online_env import SimStepEnv
 from measurement.profile_updater import PRIOR_WEIGHT, ProfileUpdater
 from measurement.rl_reward import LAMS, cost_ref_for
-from train.baseline import BucketedBaseline
-from train.online import OnlineConfig, OnlineLearner, make_canary, run_episode
+from train.online import (  # noqa: F401  (subset_* and cards_from_data re-exported for callers)
+    OnlineConfig,
+    cards_from_data,
+    run_episode,
+    start_online,
+    subset_data,
+    subset_world,
+    sync_cards,
+)
 from train.pool_state import N_ACC, PoolState
 from train.rollout import World
 from train.train import Data, load_data, load_model
@@ -54,28 +58,6 @@ ROLL = 200  # rolling window for curves and "episodes until learn beats frozen"
 
 
 # ---------- pools and data ----------
-
-def subset_world(world: World, ids: Sequence[str]) -> World:
-    """The simulator world restricted to (and ordered by) model ids."""
-    idx = [world.model_ids.index(m) for m in ids]
-    t = world.table
-    table = OutcomeTable(prompt_ids=t.prompt_ids, step_type=t.step_type, correct=t.correct[:, idx],
-                         cost=t.cost[:, idx], band=t.band)
-    return World(table, list(ids), np.asarray(world.card_costs)[idx], world.emb_index,
-                 {m: i for i, m in enumerate(ids)})
-
-
-def subset_data(data: Data, ids: Sequence[str]) -> Data:
-    idx = [data.world.model_ids.index(m) for m in ids]
-    return Data(subset_world(data.world, ids), data.train, data.val, data.embeddings, data.cards[idx], data.n_types,
-                data.data_dir)
-
-
-def cards_from_data(data: Data) -> list[ModelCard]:
-    return [ModelCard(model_id=m, provider="simulator", tier=i, mean_cost_usd=float(c), price_source="pool data",
-                      price_date="", capability=[float(x) for x in data.cards[i]])
-            for i, (m, c) in enumerate(zip(data.world.model_ids, data.world.card_costs))]
-
 
 def probe_card(model_id: str, data: Data, existing: list[ModelCard], n_probe: int = 50, seed: int = 0) -> ModelCard:
     """Card for a joining model: accuracy priors = mean of the existing cards, then n_probe training-split probes
@@ -148,40 +130,20 @@ def stream(init_dir: Path, skeletons: Sequence[Skeleton], data: Data, cfg: Onlin
     new_ids = [c.model_id for cs in add_model_at.values() for c in cs]
     start_ids = [m for m in data.world.model_ids if m not in new_ids]
     full = subset_world(data.world, start_ids + new_ids)  # pool index == simulator index
-    start = subset_data(data, start_ids)
-    known = {c.model_id: c for c in cards_from_data(data)}
 
     torch.manual_seed(seed)
-    model = load_model(init_dir, start, strict=False)
-    baseline = BucketedBaseline()
-    if (init_dir / "baseline.pt").exists():
-        baseline.load_state_dict(torch.load(init_dir / "baseline.pt", weights_only=False))
-    teacher, serving = copy.deepcopy(model), copy.deepcopy(model)
-    # card updates see the verifier's noisy signal; the simulator's flip rate is known, so de-bias it
-    pool = PoolState([known[m] for m in start_ids], ProfileUpdater(prior_weight=PRIOR_WEIGHT), flip_p=VERIFIER_FLIP_P)
-    cost_ref = cost_ref_for(data.data_dir)
+    learner, session, pool = start_online(init_dir, Path(out_dir or init_dir / "online"), data, cfg,
+                                          start_ids=start_ids, world=full, canary_skeletons=canary_skeletons,
+                                          seed=seed, flip_p=VERIFIER_FLIP_P)
+    if not learn:
+        learner = None  # same wiring, weights never updated
 
-    def sync_cards() -> None:
-        cards = pool.capability_tensor()
-        for m in (model, teacher, serving):
-            m.set_cards(cards)
-
-    canary = None
-    if canary_skeletons is not None:
-        canary = make_canary(list(canary_skeletons), lambda: subset_world(full, pool.sim_model_ids()), cost_ref,
-                             cards_fn=lambda: pool.capability_tensor()[pool.sim_indices()])
-    learner = None
-    if learn:
-        learner = OnlineLearner(model, teacher, baseline, cfg, canary, Path(out_dir or init_dir / "online"),
-                                np.random.default_rng(seed), log_price_fn=lambda m: log_price(pool.costs()[:m], cost_ref))
-    session = ControllerSession(serving, pool.costs, cost_ref, EmbeddingCache(serving, dict(full.emb_index), None),
-                                pool.model_ids, pool.available, lams=LAMS)
     rng = np.random.default_rng(seed + 1)
     rows = []
     for i, sk in enumerate(skeletons):
         if i in add_model_at:
             pool.add_models(add_model_at[i], sim_known=True)
-            sync_cards()
+            sync_cards(pool, session, learner)
         lam_idx = int(lam_idx_fn(i))
         mode = "sample" if rng.random() < explore_share else "serve"
         state, version = learner.published() if learner else (None, 0)
@@ -196,10 +158,11 @@ def stream(init_dir: Path, skeletons: Sequence[Skeleton], data: Data, cfg: Onlin
         if per_model_share:
             row |= {f"share_{m}": (used.count(m) / len(used)) if used else 0.0 for m in pool.model_ids()}
         pool.record(log)
-        sync_cards()
+        sync_cards(pool, session, learner)
         if learner:
             update = learner.observe(log)
             row["rollback"] = bool(update and "rollback" in update["alarms"])
+            row["alarms"] = "|".join(learner.monitor(log))  # review finding 7: live-reward alarm in the rows
         rows.append(row)
     if out_dir is not None:
         Path(out_dir).mkdir(parents=True, exist_ok=True)

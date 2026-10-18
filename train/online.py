@@ -34,12 +34,15 @@ import numpy as np
 import torch
 from torch.optim import AdamW
 
+from controller.contracts import ModelCard
 from controller.features import CHOOSE, HALT, collate
 from controller.policy import score_choose, score_halt
 from controller.session import ControllerSession, DecisionLog
 from measurement.online_env import StepEnvironment
+from data.routerbench import OutcomeTable
 from measurement.rl_reward import LAMS, episode_log_rewards
-from train.rollout import RLTrace
+from train.rollout import RLTrace, World
+from train.train import Data
 
 
 @dataclass
@@ -221,6 +224,80 @@ def replay(model, logs: Sequence[EpisodeLog], log_price_fn: Callable[[int], torc
                         [log.lam_idx for log in logs], dtype=torch.long), choice=choice, valid=valid,
                     halt_slot=halt_slot)
     return trace, behaviour
+
+
+# ---------- pools, wiring ----------
+
+def subset_world(world: World, ids: Sequence[str]) -> World:
+    """The simulator world restricted to (and ordered by) model ids."""
+    idx = [world.model_ids.index(m) for m in ids]
+    t = world.table
+    table = OutcomeTable(prompt_ids=t.prompt_ids, step_type=t.step_type, correct=t.correct[:, idx],
+                         cost=t.cost[:, idx], band=t.band)
+    return World(table, list(ids), np.asarray(world.card_costs)[idx], world.emb_index,
+                 {m: i for i, m in enumerate(ids)})
+
+
+def subset_data(data: Data, ids: Sequence[str]) -> Data:
+    idx = [data.world.model_ids.index(m) for m in ids]
+    return Data(subset_world(data.world, ids), data.train, data.val, data.embeddings, data.cards[idx], data.n_types,
+                data.data_dir, data.exclude_models)
+
+
+def cards_from_data(data: Data) -> list[ModelCard]:
+    return [ModelCard(model_id=m, provider="simulator", tier=i, mean_cost_usd=float(c), price_source="pool data",
+                      price_date="", capability=[float(x) for x in data.cards[i]])
+            for i, (m, c) in enumerate(zip(data.world.model_ids, data.world.card_costs))]
+
+
+def start_online(init_dir: Path, out_dir: Path, data, cfg: OnlineConfig, *, start_ids: Sequence[str] | None = None,
+                 world=None, canary_skeletons=None, seed: int = 0, flip_p: float = 0.0):
+    """Learner, serving session and pool from a simulator-RL checkpoint dir (model.pt, baseline.pt).
+
+    start_ids: the models the checkpoint was trained on (default: the whole pool); world: the simulator world in
+    pool order (start models, then any joiners); canary_skeletons default to data.val[:cfg.canary_episodes];
+    flip_p: the verifier's known flip rate, for de-biased card updates (0 live). The learner trains its own copy;
+    the session serves a separate one, loading published weights at reset; the teacher is the frozen start."""
+    from controller.embedding_cache import EmbeddingCache
+    from controller.policy import log_price
+    from measurement.profile_updater import PRIOR_WEIGHT, ProfileUpdater
+    from measurement.rl_reward import cost_ref_for
+    from train.baseline import BucketedBaseline
+    from train.pool_state import PoolState
+    from train.train import load_model
+
+    init_dir = Path(init_dir)
+    start_ids = list(start_ids or data.world.model_ids)
+    world = world or data.world
+    model = load_model(init_dir, subset_data(data, start_ids), strict=False)
+    baseline = BucketedBaseline()
+    if (init_dir / "baseline.pt").exists():
+        baseline.load_state_dict(torch.load(init_dir / "baseline.pt", weights_only=False))
+    teacher, serving = copy.deepcopy(model), copy.deepcopy(model)
+    known = {c.model_id: c for c in cards_from_data(data)}
+    pool = PoolState([known[m] for m in start_ids], ProfileUpdater(prior_weight=PRIOR_WEIGHT), flip_p=flip_p)
+    cost_ref = cost_ref_for(data.data_dir)
+    if canary_skeletons is None and data.val:
+        canary_skeletons = data.val[:cfg.canary_episodes]
+    canary = None
+    if canary_skeletons:
+        canary = make_canary(list(canary_skeletons), lambda: subset_world(world, pool.sim_model_ids()), cost_ref,
+                             cards_fn=lambda: pool.capability_tensor()[pool.sim_indices()])
+    learner = OnlineLearner(model, teacher, baseline, cfg, canary, Path(out_dir), np.random.default_rng(seed),
+                            log_price_fn=lambda m: log_price(pool.costs()[:m], cost_ref))
+    session = ControllerSession(serving, pool.costs, cost_ref, EmbeddingCache(serving, dict(world.emb_index), None),
+                                pool.model_ids, pool.available, lams=LAMS)
+    sync_cards(pool, session, learner)
+    return learner, session, pool
+
+
+def sync_cards(pool, session: ControllerSession, learner=None) -> None:
+    """Push the pool's current cards to every model that serves or learns (after add_models / record)."""
+    cards = pool.capability_tensor()
+    session.model.set_cards(cards)
+    if learner is not None:
+        learner.model.set_cards(cards)
+        learner.teacher.set_cards(cards)
 
 
 # ---------- Task 5: OnlineLearner (C2-11 replay with importance weights, C2-07 online safety) ----------

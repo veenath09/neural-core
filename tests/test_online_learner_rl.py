@@ -20,7 +20,7 @@ from tests.conftest import make_table
 from tests.test_env import IDS
 from tests.test_rollout import tiny_model, world_and_episodes
 from train.baseline import BucketedBaseline
-from train.online import OnlineConfig, OnlineLearner, run_episode
+from train.online import EpisodeLog, OnlineConfig, OnlineLearner, run_episode
 from train.rollout import World, rollout
 from train.rl import entropy_beta, rl_update
 
@@ -303,3 +303,35 @@ def test_make_canary_scores_reward_not_quality():
     got = canary(model)
     want = {i: evaluate_rl(model, sks, world, i, 1e-4)["reward"] for i in range(len(LAMS))}
     assert got == pytest.approx(want)
+
+
+def test_start_online_wires_learner_session_and_pool(tmp_path):
+    from tests.test_train import tiny_data
+    from train.online import start_online, sync_cards
+    from train.train import train
+
+    data = tiny_data()
+    train("full", seed=0, epochs=1, batch_size=32, data=data, out_dir=tmp_path, log=lambda row: None)
+    learner, session, pool = start_online(tmp_path / "full-s0", tmp_path / "online", data, OnlineConfig(canary_episodes=8))
+    assert pool.model_ids() == list(data.world.model_ids) and learner.canary is not None
+    assert session.model is not learner.model and learner.teacher is not learner.model
+    assert all(not p.requires_grad for p in learner.teacher.parameters())
+    pool.record(EpisodeLog("e", "random", 0, "serve", [], 0.0, 0.0, 1, 0,
+                           used=[(pool.model_ids()[0], 0, 1.0, 1e-4)] * 30))
+    sync_cards(pool, session, learner)
+    for m in (session.model, learner.model, learner.teacher):
+        assert torch.equal(m.cards, pool.capability_tensor())
+
+
+def test_monitor_alarm_reaches_stream_rows(tmp_path, monkeypatch):
+    from eval.online_sim import stream
+    from tests.test_train import tiny_data
+    from train.online import OnlineLearner
+    from train.train import train
+
+    data = tiny_data()
+    train("full", seed=0, epochs=1, batch_size=32, data=data, out_dir=tmp_path, log=lambda row: None)
+    monkeypatch.setattr(OnlineLearner, "monitor", lambda self, log: ["live_reward_drop"])
+    df = stream(tmp_path / "full-s0", data.train[:3], data, OnlineConfig(update_every=100), learn=True,
+                lam_idx_fn=lambda i: 0, out_dir=tmp_path / "s")
+    assert (df["alarms"] == "live_reward_drop").all()
