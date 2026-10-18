@@ -2,6 +2,8 @@ import torch
 
 from train.action_value_heads import ActionValueHeads
 from train.online_learner import OnlineLearner
+from train.rollout import rollout
+from tests.test_rollout import world_and_episodes, tiny_model
 
 
 def test_action_value_heads_output_shapes():
@@ -135,4 +137,60 @@ def test_online_learner_trains_real_action_value_heads():
     assert not torch.equal(
         halt_before,
         heads.halt.weight.detach(),
+    )
+
+def test_online_learner_trains_from_real_rollout():
+    torch.manual_seed(0)
+
+    world, episodes = world_and_episodes(4)
+
+    controller = tiny_model("full").eval()
+
+    with torch.no_grad():
+        rollout_output = rollout(
+            controller,
+            episodes,
+            world,
+        )
+
+    learner = OnlineLearner()
+
+    heads = ActionValueHeads(
+        d=128,
+        card_dim=controller.cards.shape[1],
+    )
+
+    optimizer = torch.optim.SGD(
+        heads.parameters(),
+        lr=0.05,
+    )
+
+    # Temporary external rewards.
+    # Later these will come from C3 measurement.
+    rewards = [0.8] * len(rollout_output.results)
+
+    model_before = heads.model_match.weight.detach().clone()
+
+    result = learner.train_from_rollout(
+        rollout_output=rollout_output,
+        rewards=rewards,
+        cards=controller.cards,
+        heads=heads,
+        optimizer=optimizer,
+    )
+
+    assert isinstance(result["loss"], float)
+
+    assert result["episodes"] == len(episodes)
+
+    assert result["decisions"] == sum(
+        len(actions)
+        for actions in rollout_output.decision_actions
+    )
+
+    assert learner.episode_count == len(episodes)
+
+    assert not torch.equal(
+        model_before,
+        heads.model_match.weight.detach(),
     )

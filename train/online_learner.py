@@ -323,8 +323,46 @@ class OnlineLearner:
 
         return float(loss.detach())
 
-    
-       
+    def train_from_rollout(
+        self,
+        rollout_output,
+        rewards: list[float],
+        cards: torch.Tensor,
+        heads,
+        optimizer,
+    ) -> dict:
+        if len(rollout_output.results) != len(rewards):
+            raise ValueError(
+                "rollout results and rewards must have the same length"
+            )
+
+        states, actions, returns = self.prepare_rollout_batch(
+            decision_states=rollout_output.decision_states,
+            decision_actions=rollout_output.decision_actions,
+            rewards=rewards,
+        )
+
+        choose_batch, halt_batch = self.extract_action_batches(
+            states=states,
+            actions=actions,
+            returns=returns,
+        )
+
+        loss = self.train_action_value_step(
+            heads=heads,
+            optimizer=optimizer,
+            cards=cards,
+            choose_batch=choose_batch,
+            halt_batch=halt_batch,
+        )
+
+        self.episode_count += len(rewards)
+
+        return {
+            "loss": loss,
+            "episodes": len(rewards),
+            "decisions": len(actions),
+        }
     
     def update(
         self,
