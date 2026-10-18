@@ -261,7 +261,70 @@ class OnlineLearner:
             "returns": returns[halt_indices],
         }
 
-        return choose_batch, halt_batch    
+        return choose_batch, halt_batch 
+
+    def train_action_value_step(
+        self,
+        heads,
+        optimizer,
+        cards: torch.Tensor,
+        choose_batch: dict[str, torch.Tensor],
+        halt_batch: dict[str, torch.Tensor],
+    ) -> float:
+        optimizer.zero_grad(set_to_none=True)
+
+        losses = []
+
+        # Train the real model-choice value head.
+        if len(choose_batch["actions"]) > 0:
+            choose_values = heads(
+                z_h=choose_batch["states"].detach(),
+                cards=cards,
+            )["model"]
+
+            selected_model_values = choose_values.gather(
+                1,
+                choose_batch["actions"].unsqueeze(1),
+            ).squeeze(1)
+
+            model_loss = F.mse_loss(
+                selected_model_values,
+                choose_batch["returns"],
+            )
+
+            losses.append(model_loss)
+
+        # Train the real halt value head.
+        if len(halt_batch["actions"]) > 0:
+            halt_values = heads(
+                z_h=halt_batch["states"].detach(),
+                cards=cards,
+            )["halt"]
+
+            selected_halt_values = halt_values.gather(
+                1,
+                halt_batch["actions"].unsqueeze(1),
+            ).squeeze(1)
+
+            halt_loss = F.mse_loss(
+                selected_halt_values,
+                halt_batch["returns"],
+            )
+
+            losses.append(halt_loss)
+
+        if not losses:
+            raise ValueError("no CHOOSE or HALT decisions to train")
+
+        loss = torch.stack(losses).mean()
+
+        loss.backward()
+        optimizer.step()
+
+        return float(loss.detach())
+
+    
+       
     
     def update(
         self,
