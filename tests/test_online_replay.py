@@ -179,3 +179,21 @@ def test_serve_mode_logs_are_marked():
         assert la.policy_version == 3 and all(d.policy_version == 3 for d in la.decisions)
         assert [d.action for d in la.decisions] == [d.action for d in lb.decisions]
         assert (la.quality, la.cost_usd) == (lb.quality, lb.cost_usd)
+
+
+def test_bonus_is_in_pre_sharpness_units():
+    """At sharpness k the bonus shifts logits by k * bonus, as if added before sharpening."""
+    import math
+
+    world, eps = world_and_episodes(4)
+    model = tiny_model("full")
+    with torch.no_grad():
+        model.heads.log_sharpness.fill_(math.log(10.0))
+    bonus = np.array([0.0, 0.0, 0.0, 0.5])
+    logs, _ = _run(model, world, eps, "sample", bonus=bonus)
+    trace, behaviour = replay(model, logs, _price_fn(world))
+    c = trace.choice
+    assert torch.allclose(trace.logp[c].detach(), behaviour[c], atol=1e-5)  # replay still reproduces behaviour
+    zero, _ = _run(model, world, eps[:1], "serve", bonus=np.zeros(4))
+    big, _ = _run(model, world, eps[:1], "serve", bonus=np.array([0.0, 0.0, 0.0, 5.0]))
+    assert big[0].decisions[0].action == 3  # 5.0 pre-sharpness = 50 post: dominates

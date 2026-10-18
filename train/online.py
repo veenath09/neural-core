@@ -184,7 +184,7 @@ def replay(model, logs: Sequence[EpisodeLog], log_price_fn: Callable[[int], torc
             if memory is not None:
                 memory = memory.merge(idx, out.memory)
             bonus = torch.tensor([d.bonus for d in ds], dtype=torch.float32, device=device)
-            logits = out.policy_logits + bonus
+            logits = out.policy_logits + model.heads.log_sharpness.exp() * bonus  # same units as the session
             mask = torch.tensor([d.mask for d in ds], dtype=torch.bool, device=device)
             action = torch.tensor([d.action for d in ds], dtype=torch.long, device=device)
             lp = torch.zeros(len(rows), device=device)

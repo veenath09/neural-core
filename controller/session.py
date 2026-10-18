@@ -188,7 +188,8 @@ class ControllerSession:
             bonus_t = torch.as_tensor(np.asarray(bonus, dtype=np.float32), device=self.device)
             if bonus_t.shape != (out.policy_logits.shape[1],):
                 raise ValueError(f"bonus shape {tuple(bonus_t.shape)} != pool size {out.policy_logits.shape[1]}")
-            logits = out.policy_logits + bonus_t[None]
+            # bonus in pre-sharpness logit units: policy = k * (logits + bonus) (review finding 8)
+            logits = out.policy_logits + self.model.heads.log_sharpness.exp() * bonus_t[None]
         self.memory = out.memory
         if view.write:
             self.n_written = len(self.trace)
