@@ -11,3 +11,5 @@ data/processed/
 checkpoints/
 hf_cache/
 data/clean/
+# Generated research evaluation outputs
+results/
