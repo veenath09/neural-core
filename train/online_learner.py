@@ -211,6 +211,57 @@ class OnlineLearner:
             )
 
         return choose, halt
+
+    def extract_action_batches(
+        self,
+        states: torch.Tensor,
+        actions: list[dict],
+        returns: torch.Tensor,
+    ) -> tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]]:
+        if len(states) != len(actions) or len(states) != len(returns):
+            raise ValueError(
+            "states, actions and returns must have the same length"
+        )
+
+        choose, halt = self.split_actions(actions)
+
+        choose_indices = torch.tensor(
+            [index for index, _ in choose],
+            dtype=torch.long,
+            device=states.device,
+        )
+
+        choose_actions = torch.tensor(
+            [action for _, action in choose],
+            dtype=torch.long,
+            device=states.device,
+        )
+
+        halt_indices = torch.tensor(
+            [index for index, _ in halt],
+            dtype=torch.long,
+            device=states.device,
+        )
+
+        halt_actions = torch.tensor(
+            [action for _, action in halt],
+            dtype=torch.long,
+            device=states.device,
+        )
+
+        choose_batch = {
+            "states": states[choose_indices],
+            "actions": choose_actions,
+            "returns": returns[choose_indices],
+        }
+
+        halt_batch = {
+            "states": states[halt_indices],
+            "actions": halt_actions,
+            "returns": returns[halt_indices],
+        }
+
+        return choose_batch, halt_batch    
     
     def update(
         self,

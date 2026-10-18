@@ -274,3 +274,57 @@ def test_split_actions_separates_choose_and_halt():
         (1, 0),   # stop
         (3, 1),   # escalate
     ]
+
+def test_extract_action_batches():
+    learner = OnlineLearner()
+
+    states = torch.arange(
+        4 * 128,
+        dtype=torch.float32,
+    ).reshape(4, 128)
+
+    actions = [
+        {"phase": "choose", "model": 1, "halt": None},
+        {"phase": "halt", "model": None, "halt": "stop"},
+        {"phase": "choose", "model": 2, "halt": None},
+        {"phase": "halt", "model": 3, "halt": "escalate"},
+    ]
+
+    returns = torch.tensor(
+        [1.0, 0.8, 0.6, 0.4],
+        dtype=torch.float32,
+    )
+
+    choose_batch, halt_batch = learner.extract_action_batches(
+        states=states,
+        actions=actions,
+        returns=returns,
+    )
+
+    assert choose_batch["states"].shape == (2, 128)
+    assert torch.equal(
+        choose_batch["states"],
+        states[[0, 2]],
+    )
+    assert torch.equal(
+        choose_batch["actions"],
+        torch.tensor([1, 2]),
+    )
+    assert torch.equal(
+        choose_batch["returns"],
+        torch.tensor([1.0, 0.6]),
+    )
+
+    assert halt_batch["states"].shape == (2, 128)
+    assert torch.equal(
+        halt_batch["states"],
+        states[[1, 3]],
+    )
+    assert torch.equal(
+        halt_batch["actions"],
+        torch.tensor([0, 1]),
+    )
+    assert torch.equal(
+        halt_batch["returns"],
+        torch.tensor([0.8, 0.4]),
+    )
