@@ -194,3 +194,64 @@ def test_online_learner_trains_from_real_rollout():
         model_before,
         heads.model_match.weight.detach(),
     )
+
+def test_online_learner_checkpoint_round_trip(tmp_path):
+    torch.manual_seed(0)
+
+    learner = OnlineLearner()
+    learner.episode_count = 7
+
+    heads = ActionValueHeads(
+        d=128,
+        card_dim=6,
+    )
+
+    optimizer = torch.optim.SGD(
+        heads.parameters(),
+        lr=0.05,
+        momentum=0.9,
+    )
+
+    checkpoint_path = tmp_path / "online_learner.pt"
+
+    expected_model_weight = heads.model_match.weight.detach().clone()
+    expected_halt_weight = heads.halt.weight.detach().clone()
+
+    learner.save_checkpoint(
+        path=checkpoint_path,
+        heads=heads,
+        optimizer=optimizer,
+    )
+
+    new_learner = OnlineLearner()
+
+    new_heads = ActionValueHeads(
+        d=128,
+        card_dim=6,
+    )
+
+    new_optimizer = torch.optim.SGD(
+        new_heads.parameters(),
+        lr=0.01,
+        momentum=0.9,
+    )
+
+    new_learner.load_checkpoint(
+        path=checkpoint_path,
+        heads=new_heads,
+        optimizer=new_optimizer,
+    )
+
+    assert new_learner.episode_count == 7
+
+    assert torch.equal(
+        new_heads.model_match.weight.detach(),
+        expected_model_weight,
+    )
+
+    assert torch.equal(
+        new_heads.halt.weight.detach(),
+        expected_halt_weight,
+    )
+
+    assert new_optimizer.param_groups[0]["lr"] == 0.05

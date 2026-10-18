@@ -363,7 +363,43 @@ class OnlineLearner:
             "episodes": len(rewards),
             "decisions": len(actions),
         }
-    
+    def save_checkpoint(
+        self,
+        path,
+        heads,
+        optimizer,
+    ) -> None:
+        checkpoint = {
+            "heads_state_dict": heads.state_dict(),
+            "optimizer_state_dict": optimizer.state_dict(),
+            "episode_count": self.episode_count,
+            "gamma": self.gamma,
+        }
+
+        torch.save(checkpoint, path)
+
+    def load_checkpoint(
+        self,
+        path,
+        heads,
+        optimizer,
+    ) -> None:
+        checkpoint = torch.load(
+            path,
+            map_location="cpu",
+            weights_only=False,
+        )
+
+        heads.load_state_dict(
+            checkpoint["heads_state_dict"]
+        )
+
+        optimizer.load_state_dict(
+            checkpoint["optimizer_state_dict"]
+        )
+
+        self.episode_count = checkpoint["episode_count"]
+        self.gamma = checkpoint["gamma"]
     def update(
         self,
         reward: float,
