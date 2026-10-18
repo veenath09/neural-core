@@ -68,6 +68,8 @@ class BucketedBaseline:
         }
 
     def load_state_dict(self, d: dict) -> None:
+        if tuple(d["table"].shape) != (d["n_bands"], d["n_lams"]):
+            raise ValueError(f"baseline table {tuple(d['table'].shape)} != ({d['n_bands']}, {d['n_lams']})")
         self.table = d["table"].clone()
         self.n_bands = d["n_bands"]
         self.n_lams = d["n_lams"]

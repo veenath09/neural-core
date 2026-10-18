@@ -154,3 +154,32 @@ def test_strategy_is_contract_valid():
                 validate_strategy(st, cards)
                 rounds.add(st.round)
     assert rounds == {1, 2}
+
+
+def test_after_round_rejects_a_round_from_another_model():
+    import dataclasses
+
+    import numpy as np
+    import pytest
+
+    from controller.embedding_cache import EmbeddingCache
+    from controller.session import ControllerSession
+    from measurement.online_env import SimStepEnv
+    from measurement.rl_reward import LAMS, load_cost_ref
+    from tests.test_rollout import tiny_model, world_and_episodes
+
+    world, eps = world_and_episodes(2)
+    model = tiny_model("full")
+    avail = np.ones(4, dtype=bool)
+    s = ControllerSession(model, lambda: world.card_costs, load_cost_ref(),
+                          EmbeddingCache(model, dict(world.emb_index), embed_fn=None),
+                          lambda: list(world.model_ids), lambda: avail, lams=LAMS)
+    env = SimStepEnv(eps[0])
+    task_key, task_text, budget, n = env.start()
+    s.reset("e", task_key, task_text, budget, n, 0, "serve")
+    spec = env.current_step()
+    strategy = s.decide(spec.step_id, spec.step_key, spec.step_text, spec.step_type, np.zeros(4))
+    out = env.play(strategy.model_id, 1)
+    other = next(m for m in world.model_ids if m != strategy.model_id)
+    with pytest.raises(ValueError):
+        s.after_round(dataclasses.replace(out.trace_item, model_id=other), np.zeros(4))

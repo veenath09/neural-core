@@ -250,10 +250,14 @@ def experiment_new_models(init_dir: Path, new_models: list[str], out_dir: Path, 
               for seed in seeds]
     df = pd.concat(frames, ignore_index=True)
     summary = _write(df, out, new_models=True)
-    truth = {c.model_id: c.capability[:-1] for c in known}
+    truth = {c.model_id: c.capability[:N_ACC] for c in known}  # accuracy features only (depth cards have 8)
+    final = PoolState.from_json(json.loads((out / f"s{seeds[0]}" / "learn" / "pool.json").read_text()))
+    final_cards = {c.model_id: c for c in final.cards}
     learn = df[(df["arm"] == "learn") & (df["episode"] >= df["episode"].max() + 1 - LAST)]
     summary["new_models"] = {m: {"final_share": float(learn[f"share_{m}"].mean()),
-                                 "probe_card_accuracy": c.capability[:-1], "true_train_accuracy": truth[m]}
+                                 "probe_card_accuracy": c.capability[:N_ACC],
+                                 "final_card_accuracy": final_cards[m].capability[:N_ACC],
+                                 "true_train_accuracy": truth[m]}
                              for m, c in zip(new_models, joining)}
     (out / "summary.json").write_text(json.dumps(summary, indent=2))
     return summary
@@ -272,28 +276,6 @@ def _write(df: pd.DataFrame, out: Path, new_models: bool) -> dict:
     (out / "summary.json").write_text(json.dumps(summary, indent=2))
     plot(df, out / "curve.png", new_models=new_models)
     return summary
-
-
-def main() -> None:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("experiment", choices=["shift", "new-models"])
-    ap.add_argument("--init", type=Path, required=True, help="simulator RL checkpoint dir")
-    ap.add_argument("--model", action="append", default=[], help="model joining at episode 0 (new-models)")
-    ap.add_argument("--out", type=Path, default=Path("results/online_sim"))
-    ap.add_argument("--episodes", type=int, default=5000)
-    ap.add_argument("--seed", type=int, action="append")
-    ap.add_argument("--lr", type=float, default=OnlineConfig.lr)
-    a = ap.parse_args()
-    cfg = OnlineConfig(lr=a.lr)
-    seeds = tuple(a.seed or [0])
-    if a.experiment == "shift":
-        print(json.dumps(experiment_shift(a.init, a.out, seeds, a.episodes, cfg), indent=2))
-    else:
-        print(json.dumps(experiment_new_models(a.init, a.model, a.out, seeds, a.episodes, cfg), indent=2))
-
-
-if __name__ == "__main__":
-    main()
 
 
 # ---------- paired evaluation of the final weights ----------
@@ -342,3 +324,36 @@ def paired_eval(init_dir: Path, run_dir: Path, skeletons, n_boot: int = 0) -> di
     out["learned_better_at_every_lambda"] = all(v["ci95"][0] > 0 for v in out["per_lambda"].values())
     out["learned_worse_somewhere"] = any(v["ci95"][1] < 0 for v in out["per_lambda"].values())
     return out
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("experiment", choices=["shift", "new-models", "paired"])
+    ap.add_argument("--run", type=Path, help="paired: a stream's learn dir (v*.pt, pool.json)")
+    ap.add_argument("--held-out", choices=["shift", "val"], default="val", help="paired: which held-out episodes")
+    ap.add_argument("--init", type=Path, required=True, help="simulator RL checkpoint dir")
+    ap.add_argument("--model", action="append", default=[], help="model joining at episode 0 (new-models)")
+    ap.add_argument("--out", type=Path, default=Path("results/online_sim"))
+    ap.add_argument("--episodes", type=int, default=5000)
+    ap.add_argument("--seed", type=int, action="append")
+    ap.add_argument("--lr", type=float, default=OnlineConfig.lr)
+    a = ap.parse_args()
+    cfg = OnlineConfig(lr=a.lr)
+    seeds = tuple(a.seed or [0])
+    if a.experiment == "paired":
+        _, data, _ = _init(a.init)
+        held = data.val
+        if a.held_out == "shift":
+            ids = sorted({p for sk in _test_skeletons(data) for p in sk.prompt_ids})
+            held = shifted_skeletons(data.world.table, ids, 2000, 999, {SOURCES.index(k): v for k, v in TARGET_SHARES.items()})
+        result = paired_eval(a.init, a.run, held)
+        (a.run.parent.parent / "paired.json").write_text(json.dumps(result, indent=2))
+        print(json.dumps(result, indent=2))
+    elif a.experiment == "shift":
+        print(json.dumps(experiment_shift(a.init, a.out, seeds, a.episodes, cfg), indent=2))
+    else:
+        print(json.dumps(experiment_new_models(a.init, a.model, a.out, seeds, a.episodes, cfg), indent=2))
+
+
+if __name__ == "__main__":
+    main()

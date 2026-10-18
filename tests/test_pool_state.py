@@ -221,3 +221,10 @@ def test_exclude_models_flow_from_metrics(tmp_path, monkeypatch):
     summary = rl_module.train_rl("full", 0, run, updates=1, batch_size=8, eval_every=1, max_val=8,
                                  out_dir=tmp_path / "rl", log=lambda r: None)
     assert summary["exclude_models"] == [ids[3]]
+
+
+def test_baseline_refuses_a_wrong_shape():
+    b = BucketedBaseline()
+    bad = b.state_dict() | {"table": torch.zeros(7, 5)}
+    with pytest.raises(ValueError):
+        b.load_state_dict(bad)

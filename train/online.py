@@ -175,11 +175,12 @@ def replay(model, logs: Sequence[EpisodeLog], log_price_fn: Callable[[int], torc
         for pool_size, rows in by_pool.items():  # one forward per pool size (the pool can grow mid-run)
             idx = torch.tensor(rows, device=device)
             ds = [logs[i].decisions[t] for i in rows]
-            if pool_size != full_cards.shape[0]:
-                model.set_cards(full_cards[:pool_size])
-            out = model(collate([d.view for d in ds], device), memory.select(idx) if memory is not None else None,
-                        bp_steps=bp_steps, lam=lam_all[idx], log_price=log_price_fn(pool_size).to(device))
-            if pool_size != full_cards.shape[0]:
+            try:
+                if pool_size != full_cards.shape[0]:
+                    model.set_cards(full_cards[:pool_size])
+                out = model(collate([d.view for d in ds], device), memory.select(idx) if memory is not None else None,
+                            bp_steps=bp_steps, lam=lam_all[idx], log_price=log_price_fn(pool_size).to(device))
+            finally:
                 model.set_cards(full_cards)
             if memory is not None:
                 memory = memory.merge(idx, out.memory)
@@ -312,10 +313,10 @@ class OnlineConfig:
     clip_grad: float = 1.0
     is_clip: float = 2.0  # importance ratio cap
     distill: float = 0.2  # complexity distillation toward the frozen teacher
-    # label-free anchor on decisions: 0.5 * (logp_now - logp_teacher)^2 on the logged actions (k2 KL estimate).
-    # Without it the shift pilot drifted to cheaper choices at every lambda (no labels live, unlike Part 1's
-    # supervised anchor): +0.03 reward at lambda 2 but -0.02..-0.04 at lambda 0.6-1.0, all CIs excluding 0.
-    kl: float = 0.0  # off by default: the drift's cause was the biased reward (run_episode), not a missing anchor
+    # Optional label-free anchor on decisions: 0.5 * (logp_now - logp_teacher)^2 on the logged actions (k2 KL
+    # estimate). Off by default: the shift pilot's drift to cheaper choices came from a biased reward (fixed in
+    # run_episode), and the anchor also blocked genuine adaptation (the easy-drift test stayed at 0%).
+    kl: float = 0.0
     canary_every: int = 10  # updates
     canary_episodes: int = 500
     canary_tol: float = 0.05

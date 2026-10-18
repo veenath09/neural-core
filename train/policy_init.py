@@ -124,7 +124,9 @@ def calibrate_policy_init(model, skeletons, world, cost_ref: float, lams=LAMS, g
     final = default if kept_default else fitted
     k, gaps = calibrate_sharpness(model, skeletons, world, cost_ref, {i: final[i]["reward"] for i in final}, lams,
                                   grid_k)
-    raw0 = lambda lam: float(lin.bias[0] + lin.weight[0, lin.in_features - 2] * math.log(lam))  # noqa: E731
+    with torch.no_grad():
+        b0, w0 = lin.bias[0].item(), lin.weight[0, lin.in_features - 2].item()
+    raw0 = lambda lam: b0 + w0 * math.log(lam)  # noqa: E731
     return {
         "kept_default": kept_default,
         "default_mean_reward": default_mean,

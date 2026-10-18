@@ -120,36 +120,33 @@ def test_sup_halt_only_on_halt_slots():
 
 
 def test_anchor_reduces_supervised_bce():
+    """With the anchor on, the supervised BCE drops clearly more than with it off, from the same start."""
+    import copy
+
     world, eps = world_and_episodes(8)
-    model = tiny_model("full")
+    start = tiny_model("full")
     cost_ref = load_cost_ref()
-    baseline = BucketedBaseline()
-    opt = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=0.01)
-    lam_idx = np.zeros(len(eps), dtype=int)  # fixed lambda; baseline will track returns
+    lam_idx = np.zeros(len(eps), dtype=int)
 
-    def get_batch():
-        return rollout(
-            model,
-            eps,
-            world,
-            policy="sample",
-            rng=np.random.default_rng(0),
-            lam_idx=lam_idx,
-            cost_ref=cost_ref,
-        )
+    def bce_after(anchor: bool) -> tuple[float, float]:
+        model = copy.deepcopy(start)
+        baseline = BucketedBaseline()
+        opt = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=0.01)
 
-    out0 = get_batch()
-    mean_sup_model_before = float(out0.rl.sup_model[out0.rl.valid].detach().mean())
+        def batch():
+            return rollout(model, eps, world, policy="sample", rng=np.random.default_rng(0), lam_idx=lam_idx,
+                           cost_ref=cost_ref)
 
-    for _ in range(20):
-        out = get_batch()
-        rl_update(model, out.rl, baseline, opt, beta=0.0)
+        before = float(batch().rl.sup_model[batch().rl.valid].detach().mean())
+        for _ in range(20):
+            rl_update(model, batch().rl, baseline, opt, beta=0.0, anchor=anchor)
+        out = batch()
+        return before, float(out.rl.sup_model[out.rl.valid].detach().mean())
 
-    out_final = get_batch()
-    mean_sup_model_after = float(out_final.rl.sup_model[out_final.rl.valid].detach().mean())
-
-    assert mean_sup_model_after < mean_sup_model_before
-
+    before_on, after_on = bce_after(True)
+    before_off, after_off = bce_after(False)
+    assert before_on == before_off
+    assert (before_on - after_on) > (before_off - after_off) + 0.01
 
 def test_anchor_off_matches_previous_loss():
     world, eps = world_and_episodes(4)

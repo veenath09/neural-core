@@ -107,6 +107,7 @@ class ControllerSession:
         m = int(m[0])
         c = self._log(CHOOSE, view, allowed, bonus, m, float(logp[0]), True, out)
         self.cur_model = m
+        self.issued = self.model_ids()[m]
         return Strategy(step_id=step_id, round=1, model_id=self.model_ids()[m], halt="stop",
                         complexity=c, confidence=float(torch.exp(logp[0])))
 
@@ -119,6 +120,8 @@ class ControllerSession:
         if self.rounds >= MAX_ROUNDS:
             raise RuntimeError(f"no rounds left in this step (max {MAX_ROUNDS})")
         step_id, step_key, _, _ = self.step
+        if item.model_id != getattr(self, "issued", item.model_id):
+            raise ValueError(f"round played {item.model_id!r}, but the session issued {self.issued!r}")
         item = replace(item,
                        step_index=self.step_index if item.step_index is None else item.step_index,
                        step_emb_key=step_key if item.step_emb_key is None else item.step_emb_key)
@@ -143,6 +146,7 @@ class ControllerSession:
             return None
         with torch.no_grad():
             logp_m2, _ = score_choose(logits, options_t, torch.tensor([m2], device=self.device))
+        self.issued = self.model_ids()[m2]
         return Strategy(step_id=step_id, round=2, model_id=self.model_ids()[m2], halt="stop",
                         complexity=c, confidence=float(torch.exp(logp_m2[0])))
 
