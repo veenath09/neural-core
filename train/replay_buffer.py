@@ -1,6 +1,11 @@
 class ReplayBuffer:
-    def __init__(self, capacity=1000):
+    def __init__(
+        self,
+        capacity=1000,
+        per_domain_capacity=None,
+    ):
         self.capacity = capacity
+        self.per_domain_capacity = per_domain_capacity
         self.buffer = []
 
     def __len__(self):
@@ -9,9 +14,24 @@ class ReplayBuffer:
     def add(self, episode):
         self.buffer.append(episode)
 
+        # Limit how many episodes one domain can occupy.
+        if self.per_domain_capacity is not None:
+            domain = episode.get("domain")
+
+            same_domain_indices = [
+                index
+                for index, stored_episode in enumerate(self.buffer)
+                if stored_episode.get("domain") == domain
+            ]
+
+            if len(same_domain_indices) > self.per_domain_capacity:
+                oldest_same_domain_index = same_domain_indices[0]
+                self.buffer.pop(oldest_same_domain_index)
+
+        # Global buffer capacity.
         if len(self.buffer) > self.capacity:
             self.buffer.pop(0)
-
+            
     def increment_ages(self) -> None:
         for episode in self.buffer:
             episode["age"] = episode.get("age", 0) + 1

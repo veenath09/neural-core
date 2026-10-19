@@ -140,3 +140,101 @@ def test_replay_buffer_samples_across_age_bands():
         "medium",
         "old",
     }
+
+def test_replay_buffer_evicts_oldest_episode_from_overfull_domain():
+    buffer = ReplayBuffer(
+        capacity=10,
+        per_domain_capacity=2,
+    )
+
+    episode_a1 = {
+        "id": "a1",
+        "domain": "domain_a",
+        "age": 5,
+    }
+
+    episode_a2 = {
+        "id": "a2",
+        "domain": "domain_a",
+        "age": 3,
+    }
+
+    episode_b1 = {
+        "id": "b1",
+        "domain": "domain_b",
+        "age": 2,
+    }
+
+    episode_a3 = {
+        "id": "a3",
+        "domain": "domain_a",
+        "age": 0,
+    }
+
+    buffer.add(episode_a1)
+    buffer.add(episode_a2)
+    buffer.add(episode_b1)
+    buffer.add(episode_a3)
+
+    stored = buffer.sample(10)
+
+    domain_a_ids = [
+        episode["id"]
+        for episode in stored
+        if episode["domain"] == "domain_a"
+    ]
+
+    assert len(domain_a_ids) == 2
+    assert "a1" not in domain_a_ids
+    assert "a2" in domain_a_ids
+    assert "a3" in domain_a_ids
+
+def test_replay_buffer_evicts_oldest_episode_from_overfull_domain():
+    buffer = ReplayBuffer(
+        capacity=10,
+        per_domain_capacity=2,
+    )
+
+    episode_a1 = {
+        "id": "a1",
+        "domain": "domain_a",
+        "age": 5,
+    }
+
+    episode_a2 = {
+        "id": "a2",
+        "domain": "domain_a",
+        "age": 3,
+    }
+
+    episode_b1 = {
+        "id": "b1",
+        "domain": "domain_b",
+        "age": 2,
+    }
+
+    episode_a3 = {
+        "id": "a3",
+        "domain": "domain_a",
+        "age": 0,
+    }
+
+    buffer.add(episode_a1)
+    buffer.add(episode_a2)
+    buffer.add(episode_b1)
+    buffer.add(episode_a3)
+
+    stored = buffer.sample(10)
+
+    domain_a_ids = [
+        episode["id"]
+        for episode in stored
+        if episode["domain"] == "domain_a"
+    ]
+
+    assert len(domain_a_ids) == 2
+    assert "a1" not in domain_a_ids
+    assert "a2" in domain_a_ids
+    assert "a3" in domain_a_ids
+
+    
