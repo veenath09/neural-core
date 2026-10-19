@@ -124,8 +124,13 @@ def shifted_skeletons(table: OutcomeTable, prompt_ids: Sequence[str], n: int, se
 def stream(init_dir: Path, skeletons: Sequence[Skeleton], data: Data, cfg: OnlineConfig, learn: bool,
            lam_idx_fn: Callable[[int], int], add_model_at: dict[int, list[ModelCard]] | None = None, seed: int = 0,
            explore_share: float = 1.0, canary_skeletons: Sequence[Skeleton] | None = None, out_dir: Path | None = None,
-           per_model_share: bool = False) -> pd.DataFrame:
+           per_model_share: bool = False, update_cards: bool = True,
+           world_at: dict[int, Callable[[World], World]] | None = None) -> pd.DataFrame:
+    """One prequential stream. update_cards=False with learn=False is the fully static controller. world_at maps an
+    episode index to a change of the simulator's ground truth from then on (drift: price shock, quality drop);
+    cards are never told, they only learn it from experience."""
     init_dir = Path(init_dir)
+    world_at = world_at or {}
     add_model_at = add_model_at or {}
     new_ids = [c.model_id for cs in add_model_at.values() for c in cs]
     start_ids = [m for m in data.world.model_ids if m not in new_ids]
@@ -141,6 +146,8 @@ def stream(init_dir: Path, skeletons: Sequence[Skeleton], data: Data, cfg: Onlin
     rng = np.random.default_rng(seed + 1)
     rows = []
     for i, sk in enumerate(skeletons):
+        if i in world_at:
+            full = world_at[i](full)
         if i in add_model_at:
             pool.add_models(add_model_at[i], sim_known=True)
             sync_cards(pool, session, learner)
@@ -157,8 +164,9 @@ def stream(init_dir: Path, skeletons: Sequence[Skeleton], data: Data, cfg: Onlin
                "new_model_share": (sum(m in new_ids for m in used) / len(used)) if used else 0.0, "rollback": False}
         if per_model_share:
             row |= {f"share_{m}": (used.count(m) / len(used)) if used else 0.0 for m in pool.model_ids()}
-        pool.record(log)
-        sync_cards(pool, session, learner)
+        if update_cards:
+            pool.record(log)
+            sync_cards(pool, session, learner)
         if learner:
             update = learner.observe(log)
             row["rollback"] = bool(update and "rollback" in update["alarms"])
@@ -172,13 +180,136 @@ def stream(init_dir: Path, skeletons: Sequence[Skeleton], data: Data, cfg: Onlin
 
 # ---------- experiments ----------
 
-def _run_pair(init_dir: Path, sks, data: Data, cfg: OnlineConfig, out: Path, seed: int, **kw) -> pd.DataFrame:
+ARMS = {"learn": dict(learn=True, update_cards=True),  # weights and cards adapt
+        "frozen": dict(learn=False, update_cards=True),  # cards adapt, weights fixed
+        "static": dict(learn=False, update_cards=False)}  # nothing adapts
+
+
+def _run_pair(init_dir: Path, sks, data: Data, cfg: OnlineConfig, out: Path, seed: int, arms=("learn", "frozen"),
+              **kw) -> pd.DataFrame:
     frames = []
-    for learn in (True, False):
-        df = stream(init_dir, sks, data, cfg, learn, lambda i: i % len(LAMS), seed=seed,
-                    out_dir=out / ("learn" if learn else "frozen"), **kw)
-        frames.append(df.assign(arm="learn" if learn else "frozen", seed=seed))
+    for arm in arms:
+        df = stream(init_dir, sks, data, cfg, lam_idx_fn=lambda i: i % len(LAMS), seed=seed, out_dir=out / arm,
+                    **ARMS[arm], **kw)
+        frames.append(df.assign(arm=arm, seed=seed))
     return pd.concat(frames, ignore_index=True)
+
+
+# ---------- drift scenarios ----------
+
+def price_shock(model_id: str, factor: float) -> Callable[[World], World]:
+    """The model's true per-call cost is multiplied by factor (its card still shows the old price)."""
+    def apply(world: World) -> World:
+        i = world.model_ids.index(model_id)
+        t = world.table
+        cost = t.cost.copy()
+        cost[:, i] *= factor
+        table = OutcomeTable(prompt_ids=t.prompt_ids, step_type=t.step_type, correct=t.correct, cost=cost, band=t.band)
+        return World(table, world.model_ids, world.card_costs, world.emb_index, world.model_index)
+    return apply
+
+
+def quality_drop(model_id: str, keep: float, seed: int = 0) -> Callable[[World], World]:
+    """The model now fails a share (1 - keep) of the questions it used to answer right (fixed by seed)."""
+    def apply(world: World) -> World:
+        i = world.model_ids.index(model_id)
+        t = world.table
+        correct = t.correct.copy()
+        lose = np.random.default_rng(seed).random(len(correct)) > keep
+        correct[lose, i] = False
+        table = OutcomeTable(prompt_ids=t.prompt_ids, step_type=t.step_type, correct=correct, cost=t.cost, band=t.band)
+        return World(table, world.model_ids, world.card_costs, world.emb_index, world.model_index)
+    return apply
+
+
+def with_better_model(data: Data, quality_of: str, price_of: str, new_id: str) -> Data:
+    """SYNTHETIC joiner: quality_of's outcomes at price_of's per-call costs (a cheaper twin of a strong model).
+    Labelled synthetic: no recorded model has this profile; it is the clean case where adoption must pay."""
+    w, t = data.world, data.world.table
+    q, c = w.model_ids.index(quality_of), w.model_ids.index(price_of)
+    table = OutcomeTable(prompt_ids=t.prompt_ids, step_type=t.step_type,
+                         correct=np.concatenate([t.correct, t.correct[:, [q]]], axis=1),
+                         cost=np.concatenate([t.cost, t.cost[:, [c]]], axis=1), band=t.band)
+    ids = list(w.model_ids) + [new_id]
+    world = World(table, ids, np.append(w.card_costs, w.card_costs[c]), w.emb_index, {m: i for i, m in enumerate(ids)})
+    card = data.cards[q].clone()
+    card[N_ACC] = data.cards[c][N_ACC]
+    return Data(world, data.train, data.val, data.embeddings, torch.cat([data.cards, card[None]]), data.n_types,
+                data.data_dir, data.exclude_models)
+
+
+def _with_card_costs(world: World, costs: np.ndarray) -> World:
+    return World(world.table, world.model_ids, np.asarray(costs, dtype=float), world.emb_index, world.model_index)
+
+
+def arm_rewards(init_dir: Path, data: Data, world: World, skeletons, weights: Path | None, pool_json: Path,
+                cost_ref: float) -> dict[int, np.ndarray]:
+    """Per-episode greedy reward at every lambda for one arm's final state (weights, cards) in a given world."""
+    pool = PoolState.from_json(json.loads(Path(pool_json).read_text()))
+    ids = pool.model_ids()
+    w = _with_card_costs(subset_world(world, ids), pool.costs())
+    model = load_model(init_dir, subset_data(data, [m for m in ids if m in data.world.model_ids]), strict=False)
+    if weights is not None:
+        model.load_state_dict(torch.load(weights, weights_only=True))
+    model.set_cards(pool.capability_tensor())
+    return {i: episode_rewards(model, skeletons, w, i, cost_ref) for i in range(len(LAMS))}
+
+
+def compare_arms(rewards: dict[str, dict[int, np.ndarray]], base: str = "static") -> dict:
+    out = {}
+    for arm, by_lam in rewards.items():
+        out[arm] = {}
+        for i, r in by_lam.items():
+            d = r - rewards[base][i]
+            half = 1.96 * d.std(ddof=1) / math.sqrt(len(d)) if len(d) > 1 else 0.0
+            out[arm][f"{LAMS[i]:g}"] = {"mean": float(r.mean()), f"diff_vs_{base}": float(d.mean()),
+                                        "ci95": [float(d.mean() - half), float(d.mean() + half)]}
+    return out
+
+
+def experiment_drift(init_dir: Path, kind: str, out_dir: Path, seeds=(0,), n_episodes: int = 5000, at: int = 1000,
+                     cfg: OnlineConfig | None = None, target: str | None = None) -> dict:
+    """kind: price_shock (target x10 at episode `at`), quality_drop (target keeps half its right answers at `at`),
+    better_model (a SYNTHETIC cheaper twin of the strongest model joins at episode 0). target defaults to the
+    model the controller uses most (price/quality) or the strongest model (better_model)."""
+    init_dir, data, _ = _init(init_dir)
+    cfg = cfg or OnlineConfig()
+    out = Path(out_dir) / f"drift_{kind}"
+    sks = _test_skeletons(data)[:n_episodes]
+    ids = list(data.world.model_ids)
+    kw = {"canary_skeletons": data.val[:cfg.canary_episodes], "per_model_share": True}
+    if kind in ("price_shock", "quality_drop"):
+        target = target or ids[1]
+        change = price_shock(target, 10.0) if kind == "price_shock" else quality_drop(target, 0.5, seed=7)
+        kw["world_at"] = {at: change}
+        stream_data = data
+    elif kind == "better_model":
+        target = target or ids[-1]
+        new_id = f"synthetic-cheap-{target.split('/')[-1]}"
+        stream_data = with_better_model(data, target, ids[0], new_id)
+        known = cards_from_data(stream_data)
+        joiner = replace(probe_card(new_id, stream_data, [c for c in known if c.model_id != new_id]), tier=len(ids))
+        kw["add_model_at"] = {0: [joiner]}
+    else:
+        raise ValueError(f"unknown drift {kind!r}")
+    frames = [_run_pair(init_dir, sks, stream_data, cfg, out / f"s{seed}", seed, arms=tuple(ARMS), **kw)
+              for seed in seeds]
+    df = pd.concat(frames, ignore_index=True)
+    summary = _write(df, out, new_models=kind == "better_model")
+    # held-out comparison of each arm's FINAL state in the post-drift world
+    world = stream_data.world
+    if "world_at" in kw:
+        world = kw["world_at"][at](world)
+    cost_ref = cost_ref_for(data.data_dir)
+    s0 = out / f"s{seeds[0]}"
+    finals = {"learn": max((s0 / "learn").glob("v*.pt"), key=lambda p: int(p.stem[1:]), default=None),
+              "frozen": None, "static": None}
+    rewards = {arm: arm_rewards(init_dir, stream_data, world, data.val, finals[arm], s0 / arm / "pool.json", cost_ref)
+               for arm in ARMS}
+    summary |= {"drift": kind, "target": target, "at_episode": at if kind != "better_model" else 0,
+                "held_out": compare_arms(rewards)}
+    (out / "summary.json").write_text(json.dumps(summary, indent=2))
+    return summary
 
 
 def summarise(df: pd.DataFrame) -> dict:
@@ -328,7 +459,10 @@ def paired_eval(init_dir: Path, run_dir: Path, skeletons, n_boot: int = 0) -> di
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("experiment", choices=["shift", "new-models", "paired"])
+    ap.add_argument("experiment", choices=["shift", "new-models", "paired", "drift"])
+    ap.add_argument("--kind", choices=["price_shock", "quality_drop", "better_model"], help="drift scenario")
+    ap.add_argument("--target", help="drift: model to shock / degrade / copy (default: see experiment_drift)")
+    ap.add_argument("--at", type=int, default=1000, help="drift: episode at which the world changes")
     ap.add_argument("--run", type=Path, help="paired: a stream's learn dir (v*.pt, pool.json)")
     ap.add_argument("--held-out", choices=["shift", "val"], default="val", help="paired: which held-out episodes")
     ap.add_argument("--init", type=Path, required=True, help="simulator RL checkpoint dir")
@@ -349,6 +483,8 @@ def main() -> None:
         result = paired_eval(a.init, a.run, held)
         (a.run.parent.parent / "paired.json").write_text(json.dumps(result, indent=2))
         print(json.dumps(result, indent=2))
+    elif a.experiment == "drift":
+        print(json.dumps(experiment_drift(a.init, a.kind, a.out, seeds, a.episodes, a.at, cfg, a.target), indent=2))
     elif a.experiment == "shift":
         print(json.dumps(experiment_shift(a.init, a.out, seeds, a.episodes, cfg), indent=2))
     else:

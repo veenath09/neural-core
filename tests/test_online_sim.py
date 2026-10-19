@@ -101,3 +101,48 @@ def test_new_model_experiment_passes_a_canary(monkeypatch, tmp_path):
     with pytest.raises(RuntimeError):
         sim.experiment_new_models(tmp_path, [list(data.world.model_ids)[3]], tmp_path, cfg=OnlineConfig(canary_episodes=7))
     assert len(seen["canary_skeletons"]) == min(7, len(data.val))
+
+
+def test_static_arm_never_changes_cards_or_weights(tmp_path):
+    import json
+
+    data = tiny_data()
+    init = _trained(tmp_path, data)
+    df = stream(init, data.train[:12], data, OnlineConfig(update_every=4), learn=False, update_cards=False,
+                lam_idx_fn=lambda i: 0, out_dir=tmp_path / "static")
+    pool = json.loads((tmp_path / "static" / "pool.json").read_text())
+    assert pool["cards"] == pool["prior"] and (df["policy_version"] == 0).all()
+
+
+def test_drift_changes_the_world_only_from_its_episode():
+    from eval.online_sim import price_shock, quality_drop
+
+    data = tiny_data()
+    w = data.world
+    shocked = price_shock(w.model_ids[1], 10.0)(w)
+    assert np.allclose(shocked.table.cost[:, 1], w.table.cost[:, 1] * 10)
+    assert np.allclose(shocked.table.cost[:, 0], w.table.cost[:, 0]) and np.array_equal(shocked.card_costs, w.card_costs)
+    worse = quality_drop(w.model_ids[2], 0.5, seed=1)(w)
+    assert worse.table.correct[:, 2].sum() < w.table.correct[:, 2].sum()
+    assert not (worse.table.correct[:, 2] & ~w.table.correct[:, 2]).any()  # never newly right
+
+
+def test_with_better_model_is_a_cheap_twin():
+    from eval.online_sim import with_better_model
+
+    data = tiny_data()
+    ids = list(data.world.model_ids)
+    d2 = with_better_model(data, ids[3], ids[0], "twin")
+    t = d2.world.table
+    assert d2.world.model_ids[-1] == "twin" and t.n_models == 5
+    assert np.array_equal(t.correct[:, 4], t.correct[:, 3]) and np.allclose(t.cost[:, 4], t.cost[:, 0])
+    assert d2.cards.shape[0] == 5
+
+
+def test_compare_arms_paired_differences():
+    from eval.online_sim import compare_arms
+
+    r = {"static": {0: np.array([0.5, 0.5, 0.5])}, "learn": {0: np.array([0.6, 0.7, 0.5])}}
+    out = compare_arms(r)
+    assert out["learn"]["0.1"]["diff_vs_static"] == pytest.approx(0.1)
+    assert out["static"]["0.1"]["diff_vs_static"] == 0.0
