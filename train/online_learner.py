@@ -7,6 +7,7 @@ class OnlineLearner:
     def __init__(self, gamma: float = 1.0):
         self.episode_count = 0
         self.gamma = gamma
+        self.anchor_state = None
 
     def monte_carlo_returns(
         self,
@@ -270,6 +271,7 @@ class OnlineLearner:
         cards: torch.Tensor,
         choose_batch: dict[str, torch.Tensor],
         halt_batch: dict[str, torch.Tensor],
+        anchor_lambda: float = 0.0,
     ) -> float:
         optimizer.zero_grad(set_to_none=True)
 
@@ -313,15 +315,20 @@ class OnlineLearner:
 
             losses.append(halt_loss)
 
-        if not losses:
-            raise ValueError("no CHOOSE or HALT decisions to train")
+            if not losses:
+                raise ValueError("no CHOOSE or HALT decisions to train")
 
-        loss = torch.stack(losses).mean()
+            loss = torch.stack(losses).mean()
 
-        loss.backward()
-        optimizer.step()
+            if anchor_lambda > 0.0:
+                loss = loss + (
+                        anchor_lambda * self.anchor_penalty(heads)
+                        )
 
-        return float(loss.detach())
+            loss.backward()
+            optimizer.step()
+
+            return float(loss.detach())
 
     def train_from_rollout(
         self,
@@ -330,6 +337,7 @@ class OnlineLearner:
         cards: torch.Tensor,
         heads,
         optimizer,
+        anchor_lambda: float = 0.0,
     ) -> dict:
         if len(rollout_output.results) != len(rewards):
             raise ValueError(
@@ -354,6 +362,7 @@ class OnlineLearner:
             cards=cards,
             choose_batch=choose_batch,
             halt_batch=halt_batch,
+            anchor_lambda=anchor_lambda,
         )
 
         self.episode_count += len(rewards)
@@ -424,6 +433,7 @@ class OnlineLearner:
         cards: torch.Tensor,
         heads,
         optimizer,
+        anchor_lambda: float = 0.0,
     ) -> dict:
         replay_episodes = replay_buffer.sample_age_banded(
             size=sample_size
@@ -472,6 +482,7 @@ class OnlineLearner:
             cards=cards,
             choose_batch=choose_batch,
             halt_batch=halt_batch,
+            anchor_lambda=anchor_lambda,
         )
 
         return {
@@ -480,6 +491,31 @@ class OnlineLearner:
             "decisions": len(action_batch),
         }
 
+    def set_anchor(self, heads) -> None:
+        self.anchor_state = {
+            name: parameter.detach().clone()
+            for name, parameter in heads.named_parameters()
+        }
+
+    def anchor_penalty(self, heads) -> torch.Tensor:
+        if self.anchor_state is None:
+            raise ValueError("anchor has not been set")
+
+        penalties = []
+
+        for name, parameter in heads.named_parameters():
+            anchor_parameter = self.anchor_state[name].to(
+                device=parameter.device,
+                dtype=parameter.dtype,
+            )
+
+            penalties.append(
+                torch.mean(
+                    (parameter - anchor_parameter) ** 2
+                )
+            )
+
+        return torch.stack(penalties).mean()
     
     def save_checkpoint(
         self,
