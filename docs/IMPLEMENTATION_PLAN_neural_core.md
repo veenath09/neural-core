@@ -223,6 +223,25 @@ A second core architecture, `arch = "attn"`, alongside the MLP core of D11. The 
 
 Stage B starts from the supervised EMA checkpoint. Reward per episode `R = quality − λ·(spent/n_steps)/cost_ref` (`CompositeScorer` with `cost_usd = spent/n_steps`; `cost_ref` from `conf/score.yaml` is a per-step statistic), paid out per decision so that `Σ r_t = R`. λ ∈ {0.1, 0.3, 0.6, 1.0, 2.0}, sampled per episode. λ enters only the heads: `policy_logits = success_logits − λ·softplus(g(z_H, ln λ, c))·ln(card_cost/cost_ref)`, `halt_policy = halt_logit + h(z_H, ln λ, c)`, `c = σ(complexity_logit)`. It never enters the tokens, because `context_free` masks the budget token and must still see λ. The complexity head stays trained (auxiliary 0.2·MSE to the exact band), keys the bucketed baseline `b[band, λ]`, and conditions the policy. Loss `−mean(A·log π) − β·mean(H) + 0.2·MSE_complexity`, β 0.01 → 0.001, lr 1e-4, clip 1.0. Safety guard every 250 updates: val quality more than 5 points below the supervised reference at any λ → restore the last good weights, halve the lr. Frontier: serve mode per λ against the λ-oracle `weighted_episode_oracle(ep, λ/(n_steps·cost_ref))`. Configs `full` and `context_free` × 3 seeds. Stage C (live online RL) continues from the Stage B checkpoint and baseline; see the online RL plan. Deviation (seed-0 pilot): the supervised model and halt BCE losses (weights 1.0 and 0.5) stay on during simulator RL as an anchor; without it RL collapsed to cheap models at every λ. Deviation (seed-0 pilot v2): the safety guard compares val reward, not quality, against the supervised start at each λ, because high-λ policies trade quality for cost by design.
 
+**D13 deviations (2026-10-21/22, seed-0 pilots; each with its reason):**
+
+- *Supervised anchor during simulator RL* (pilot v1): without it RL collapsed to cheap models at every λ.
+- *Reward-based guard* (v2): a quality guard rejected high-λ policies that trade quality for cost by design.
+- *Guard reference before calibration*: measured on the supervised start (C2-07); a calibrated start that fails it is reverted (alarm `calibration_rejected`).
+- *Calibrated start* (v3): the default init sat at the expensive corner; a per-λ grid search of price weight and halt offset on training episodes, fitted linear in ln λ (refit with 4× weight on any λ left below the default start), beat both the supervised τ rule and 1,000 RL updates.
+- *Learnable sharpness k* (v4): at k = 1 the sampling policy was near-uniform (λ = 1: sample 0.33 vs serve 0.54); k scales policy and halt logits, leaves serve decisions unchanged, set to the smallest grid value with sample within 0.02 of serve (alarm `sharpness_at_grid_edge` at the top of the grid).
+- *Per-pool `cost_ref`* (supersedes "cost_ref only via conf/score.yaml"): the depth pools ship `cost_ref.json` (strongest option's mean per-step cost, train split); every reward, guard, calibration and evaluation uses the pool's own value.
+- *Escalation by card cost*: escalation targets are strictly pricier cards, not higher pool indices, because joiners are appended whatever their price (`Episode(model_costs=...)`; cost-ordered pools unchanged).
+- *De-biased card updates*: verifier success rates are corrected with the known flip rate, (obs − f)/(1 − 2f), or every card drifts toward 0.5; cards wider than the C3 layout use the same w = 50 formula.
+- *Audit-verdict rewards*: online rewards use an independent verdict of each step's final answer, de-biased; the verdict escalation acts on is selected by escalation itself (flagged rounds are re-rolled), and rewarding it taught the learner to escalate to re-roll the checker. Unplayed steps stay exact zeros.
+- *Teacher-relative reward canary*: the online canary compares reward with the frozen starting weights under the same current cards; a reference measured once made card drift alone trigger rollbacks.
+- *Optional KL anchor* (`OnlineConfig.kl`, default 0): available, off because it also blocked genuine adaptation.
+- *Bonus in pre-sharpness units*: the exploration bonus is scaled by k in session and replay, keeping its planned magnitude.
+- *Kept versions*: the learner keeps the last 3 published checkpoints (all of them filled the disk).
+- *Workload shift on our own test split*: C3's `make_shifted_test.py` reads C3's `data/clean` split, different from the trained controllers'; the shift is rebuilt with the same target task mix (C3-13 shares).
+- *`probe_card` instead of `build_onboarded_card`*: the latter requires exactly three existing cards; `probe_card` applies the same prior + w = 50 probe update for any pool size and keeps depth features.
+- *New-model experiments on the depth pool* (kimi-k2.6; gpt-6-luna with 4 depth levels) instead of RouterBench's 2024 models, which have no recorded outcomes for newer models.
+
 ### D9. Engineering
 
 - Layout: packages at repo root (`controller/`, `data/`, `train/`, `eval/`). Delete the empty `models/` to avoid confusion with LLM "models".
