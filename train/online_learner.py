@@ -363,6 +363,124 @@ class OnlineLearner:
             "episodes": len(rewards),
             "decisions": len(actions),
         }
+
+    def store_rollout_in_replay(
+        self,
+        rollout_output,
+        rewards: list[float],
+        replay_buffer,
+    ) -> int:
+        if len(rollout_output.results) != len(rewards):
+            raise ValueError(
+                "rollout results and rewards must have the same length"
+            )
+
+        if (
+            len(rollout_output.decision_states)
+            != len(rollout_output.results)
+            or len(rollout_output.decision_actions)
+            != len(rollout_output.results)
+        ):
+            raise ValueError(
+                "rollout states, actions and results must align"
+            )
+
+        # Existing replay episodes become one generation older.
+        replay_buffer.increment_ages()
+
+        stored_count = 0
+
+        for index, reward in enumerate(rewards):
+            decision_states = rollout_output.decision_states[index]
+            decision_actions = rollout_output.decision_actions[index]
+
+            if len(decision_states) != len(decision_actions):
+                raise ValueError(
+                    "decision states and actions must have the same length"
+                )
+
+            states, returns = self.prepare_episode(
+                decision_states=decision_states,
+                reward=reward,
+            )
+
+            replay_episode = {
+                "states": states.detach().cpu(),
+                "actions": list(decision_actions),
+                "returns": returns.detach().cpu(),
+                "domain": rollout_output.results[index].ep_type,
+                "age": 0,
+            }
+
+            replay_buffer.add(replay_episode)
+            stored_count += 1
+
+        return stored_count
+
+    def train_from_replay(
+        self,
+        replay_buffer,
+        sample_size: int,
+        cards: torch.Tensor,
+        heads,
+        optimizer,
+    ) -> dict:
+        replay_episodes = replay_buffer.sample_age_banded(
+            size=sample_size
+        )
+
+        if not replay_episodes:
+            raise ValueError("replay buffer is empty")
+
+        state_batches = []
+        action_batch = []
+        return_batches = []
+
+        for episode in replay_episodes:
+            states = episode["states"]
+            actions = episode["actions"]
+            returns = episode["returns"]
+
+            if len(states) != len(actions) or len(states) != len(returns):
+                raise ValueError(
+                    "replay states, actions and returns must align"
+                )
+
+            state_batches.append(states)
+            action_batch.extend(actions)
+            return_batches.append(returns)
+
+        states = torch.cat(
+            state_batches,
+            dim=0,
+        )
+
+        returns = torch.cat(
+            return_batches,
+            dim=0,
+        )
+
+        choose_batch, halt_batch = self.extract_action_batches(
+            states=states,
+            actions=action_batch,
+            returns=returns,
+        )
+
+        loss = self.train_action_value_step(
+            heads=heads,
+            optimizer=optimizer,
+            cards=cards,
+            choose_batch=choose_batch,
+            halt_batch=halt_batch,
+        )
+
+        return {
+            "loss": loss,
+            "replay_episodes": len(replay_episodes),
+            "decisions": len(action_batch),
+        }
+
+    
     def save_checkpoint(
         self,
         path,
