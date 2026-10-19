@@ -278,7 +278,11 @@ def train_rl(config: str, seed: int, init_dir: Path, updates: int = 1000, batch_
         if exclude_models and set(exclude_models) != set(recorded):  # review finding 6: never a different pool
             raise ValueError(f"--exclude-model {sorted(exclude_models)} != the init run's {sorted(recorded)}")
         exclude_models = recorded
-        data = load_data(data_dir, exclude_models=exclude_models) if exclude_models else load_data(data_dir)
+        hard_p = float(init_summary.get("hard_p", 0.0))
+        if exclude_models or hard_p:
+            data = load_data(data_dir, exclude_models=exclude_models, hard_p=hard_p)
+        else:
+            data = load_data(data_dir)
     torch.manual_seed(seed)
     rng = np.random.default_rng(seed)
 
@@ -406,7 +410,7 @@ def train_rl(config: str, seed: int, init_dir: Path, updates: int = 1000, batch_
     summary = {"config": config, "seed": seed, "stage": "rl_sim", "init_dir": str(init_dir),
                "data_dir": str(data.data_dir or DATA_DIR), "lams": list(LAMS),
                "cost_ref": cost_ref, "reference_metric": "reward", "reference_by_lam": reference_by_lam,
-               "exclude_models": list(getattr(data, "exclude_models", ())),
+               "exclude_models": list(getattr(data, "exclude_models", ())), "hard_p": data.world.hard_p,
                "calibrated_init": init_report,
                "best_update": best_update, "best_mean_val_reward": best_mean_val_reward, "history": history,
                "final_model_state": model.state_dict(), "final_baseline_state": baseline.state_dict()}

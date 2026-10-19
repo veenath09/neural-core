@@ -27,7 +27,7 @@ import pandas as pd
 
 from measurement.rl_reward import LAMS, lam_oracle_points
 from train.rl import evaluate_rl
-from train.train import Data, load_data, load_model
+from train.train import Data, load_model, load_run_data
 
 __all__ = ["LAMS", "frontier", "by_type"]
 
@@ -36,7 +36,7 @@ def _load_rl_context(rl_dir: Path, data: Data | None, max_val: int | None):
     rl_dir = Path(rl_dir)
     summary = json.loads((rl_dir / "metrics.json").read_text())
     if data is None:
-        data = load_data(Path(summary["data_dir"]))
+        data = load_run_data(summary)
     model = load_model(rl_dir, data)
     val_sk = data.val[:max_val] if max_val else data.val
     cost_ref = summary["cost_ref"]

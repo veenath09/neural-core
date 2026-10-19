@@ -37,6 +37,7 @@ class World:
     card_costs: np.ndarray  # mean cost per call from the model cards
     emb_index: dict[str, int]
     model_index: dict[str, int]
+    hard_p: float = 0.0  # hidden episode difficulty (data.env.Episode); 0 = the original simulator
 
 
 def tau_choice(p: np.ndarray, candidates: Sequence[int], tau: float) -> int:

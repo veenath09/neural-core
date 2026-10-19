@@ -78,10 +78,11 @@ def run_episode(ep: Episode, policy: Policy) -> EpisodeResult:
 
 
 def evaluate(skeletons: Sequence[Skeleton], table: OutcomeTable, model_ids: Sequence[str],
-             policies: Sequence[Policy]) -> pd.DataFrame:
+             policies: Sequence[Policy], **episode_kw) -> pd.DataFrame:
+    """episode_kw go to every Episode (e.g. hard_p, model_costs), so baselines see the same simulator."""
     rows = []
     for policy in policies:
         for sk in skeletons:
-            result = run_episode(Episode(sk, table, model_ids), policy)
+            result = run_episode(Episode(sk, table, model_ids, **episode_kw), policy)
             rows.append({"policy": policy.name, **asdict(result)})
     return pd.DataFrame(rows)

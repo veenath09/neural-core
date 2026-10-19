@@ -6,7 +6,12 @@ more expensive one, then stop. The last round's answer is the step's answer.
 
 "More expensive" is by pool index (pools are cost-ordered) unless the episode is given
 model_costs (the card costs), in which case it is a strictly higher model_cost: a pool that
-grows at run time appends joiners at the end whatever their price."""
+grows at run time appends joiners at the end whatever their price.
+
+Optional hidden episode difficulty (hard_p > 0; default 0 = the original simulator): with probability
+hard_p (fixed per episode by a hash), the episode is "hard" and the cheaper half of the models fail every
+step of it, whatever the prompt. Nothing in the current prompt reveals it; only earlier results in the same
+episode do. This is the dependency a workflow-aware controller should exploit and a per-query router cannot."""
 
 from __future__ import annotations
 
@@ -43,7 +48,8 @@ class EnvState:
 
 class Episode:
     def __init__(self, skeleton: Skeleton, table: OutcomeTable, model_ids: Sequence[str],
-                 flip_p: float = VERIFIER_FLIP_P, seed: int = 0, model_costs: np.ndarray | None = None):
+                 flip_p: float = VERIFIER_FLIP_P, seed: int = 0, model_costs: np.ndarray | None = None,
+                 hard_p: float = 0.0):
         self.skeleton = skeleton
         self.table = table
         self.model_ids = list(model_ids)
@@ -55,6 +61,13 @@ class Episode:
         self.model_costs = None if model_costs is None else np.asarray(model_costs, dtype=float)
         if self.model_costs is not None and self.model_costs.shape != (self.n_models,):
             raise ValueError(f"model_costs shape {self.model_costs.shape} != ({self.n_models},)")
+        self.hard_p = hard_p
+        key = f"hard|{seed}|{skeleton.episode_id}"
+        u = int.from_bytes(hashlib.blake2b(key.encode(), digest_size=8).digest()) / 2**64
+        self.hard = bool(hard_p > 0 and u < hard_p)
+        order = np.argsort(self.model_costs, kind="stable") if self.model_costs is not None else np.arange(self.n_models)
+        self.cheap = np.zeros(self.n_models, dtype=bool)
+        self.cheap[order[: self.n_models // 2]] = True  # the cheaper half fails throughout a hard episode
 
     def initial_state(self) -> EnvState:
         return EnvState(budget_left=self.skeleton.budget_usd)
@@ -65,6 +78,8 @@ class Episode:
     def succeeds(self, s: EnvState) -> np.ndarray:
         """Which pool models answer the current step correctly, given the history (D3)."""
         ok = self.table.correct[self.row(s)].copy()
+        if self.hard:
+            ok &= ~self.cheap
         if self.skeleton.ep_type == "propagation" and s.last_fail_tier is not None:
             ok &= np.arange(self.n_models) > s.last_fail_tier
         return ok

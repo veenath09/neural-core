@@ -85,14 +85,14 @@ def exclude_from(prompts, cards: list, exclude_models: Sequence[str]) -> tuple:
     return out, [replace(cards[old], tier=new) for new, old in enumerate(keep)]
 
 
-def load_data(data_dir: Path = DATA_DIR, exclude_models: Sequence[str] = ()) -> Data:
+def load_data(data_dir: Path = DATA_DIR, exclude_models: Sequence[str] = (), hard_p: float = 0.0) -> Data:
     prompts, cards = load_prepared(data_dir)
     if exclude_models:
         prompts, cards = exclude_from(prompts, cards, exclude_models)
     emb, emb_index = load_cache(data_dir)
     ids = [c.model_id for c in cards]
     world = World(OutcomeTable.from_frame(prompts), ids, np.array([c.mean_cost_usd for c in cards]), emb_index,
-                  {m: i for i, m in enumerate(ids)})
+                  {m: i for i, m in enumerate(ids)}, hard_p)
     return Data(world, load_skeletons("train", data_dir), load_skeletons("val", data_dir),
                 torch.from_numpy(np.array(emb)), torch.tensor([c.capability for c in cards]),
                 int(prompts["step_type"].max()) + 1, Path(data_dir), tuple(exclude_models))
@@ -100,7 +100,8 @@ def load_data(data_dir: Path = DATA_DIR, exclude_models: Sequence[str] = ()) -> 
 
 def make_episodes(skeletons: Sequence[Skeleton], world: World) -> list[Episode]:
     """Simulator episodes on this world; escalation is to a strictly pricier card (same rule as the rollout)."""
-    return [Episode(sk, world.table, world.model_ids, model_costs=world.card_costs) for sk in skeletons]
+    return [Episode(sk, world.table, world.model_ids, model_costs=world.card_costs, hard_p=world.hard_p)
+            for sk in skeletons]
 
 
 def evaluate(model, skeletons: Sequence[Skeleton], world: World, tau: float = 0.5, batch_size: int = 512,
@@ -128,11 +129,12 @@ def evaluate(model, skeletons: Sequence[Skeleton], world: World, tau: float = 0.
 def reference_points(skeletons: Sequence[Skeleton], world: World, cache_dir: Path | None) -> dict:
     """Episode-oracle quality and cost on these skeletons, cached (keyed by the episode ids) because the
     exact search takes minutes on a large pool."""
-    key = hashlib.blake2b("|".join(sk.episode_id for sk in skeletons).encode(), digest_size=6).hexdigest()
+    ids = "|".join(sk.episode_id for sk in skeletons) + (f"|hard={world.hard_p}" if world.hard_p else "")
+    key = hashlib.blake2b(ids.encode(), digest_size=6).hexdigest()
     cache = Path(cache_dir) / f"oracle_{key}.json" if cache_dir else None
     if cache and cache.exists():
         return json.loads(cache.read_text())
-    df = evaluate_policies(skeletons, world.table, world.model_ids, [EpisodeOracle()])
+    df = evaluate_policies(skeletons, world.table, world.model_ids, [EpisodeOracle()], hard_p=world.hard_p)
     ref = {"n": len(skeletons), "oracle_quality": float(df["quality"].mean()), "oracle_cost": float(df["cost_usd"].mean())}
     if cache:
         cache.write_text(json.dumps(ref))
@@ -182,7 +184,8 @@ def train(config: str, seed: int = 0, epochs: int = 20, batch_size: int = 256, l
     run_dir.mkdir(parents=True, exist_ok=True)
     history, best, stale, step = [], math.inf, 0, 0
     ref = reference_points(val_sk, data.world, data.data_dir)
-    floor = evaluate_policies(val_sk, data.world.table, data.world.model_ids, [AlwaysCheapest()])
+    floor = evaluate_policies(val_sk, data.world.table, data.world.model_ids, [AlwaysCheapest()],
+                              hard_p=data.world.hard_p)
     ref_floor = float(floor["quality"].mean())  # always-cheapest: 0% of the gap, oracle: 100%
     log({"reference": ref | {"always_cheapest_quality": ref_floor,
                              "always_cheapest_cost": float(floor["cost_usd"].mean())}})
@@ -225,10 +228,17 @@ def train(config: str, seed: int = 0, epochs: int = 20, batch_size: int = 256, l
                 break
     summary = {"config": config, "seed": seed, "params": n_parameters(model), "best_val_loss": best,
                "data_dir": str(data.data_dir or DATA_DIR), "exclude_models": list(data.exclude_models),
+               "hard_p": data.world.hard_p,
                "reference": ref,
                "model_config": asdict(CONFIGS[config]), "history": history}
     (run_dir / "metrics.json").write_text(json.dumps(summary, indent=2))
     return summary
+
+
+def load_run_data(summary: dict) -> Data:
+    """The pool a run was trained on, from its metrics.json: data_dir, excluded models, hidden difficulty."""
+    return load_data(Path(summary.get("data_dir", DATA_DIR)), exclude_models=summary.get("exclude_models", ()),
+                     hard_p=summary.get("hard_p", 0.0))
 
 
 def load_model(run_dir: Path, data: Data | None = None, strict: bool = True) -> Controller:
@@ -237,7 +247,7 @@ def load_model(run_dir: Path, data: Data | None = None, strict: bool = True) -> 
     any other missing or unexpected key raises RuntimeError."""
     summary = json.loads((Path(run_dir) / "metrics.json").read_text())
     # rebuild the run's pool, including any models it was trained without (review finding 6)
-    data = data or load_data(Path(summary.get("data_dir", DATA_DIR)), exclude_models=summary.get("exclude_models", ()))
+    data = data or load_run_data(summary)
     model = Controller(CONFIGS[summary["config"]], data.embeddings, data.cards, data.n_types)
     state_dict = torch.load(Path(run_dir) / "model.pt", weights_only=True)
     if strict:
@@ -263,9 +273,10 @@ def main() -> None:
     parser.add_argument("--data-dir", type=Path, default=Path(DATA_DIR), help="pool: RouterBench (default) or depth_pool")
     parser.add_argument("--out-dir", type=Path, default=Path("runs"))
     parser.add_argument("--exclude-model", action="append", default=[], help="leave a model out of the pool (repeatable)")
+    parser.add_argument("--hard-p", type=float, default=0.0, help="hidden episode difficulty (data.env.Episode)")
     a = parser.parse_args()
     train(a.config, a.seed, a.epochs, a.batch_size, bp_min=a.bp_min, max_train=a.max_train, max_val=a.max_val,
-          out_dir=a.out_dir, data=load_data(a.data_dir, exclude_models=a.exclude_model),
+          out_dir=a.out_dir, data=load_data(a.data_dir, exclude_models=a.exclude_model, hard_p=a.hard_p),
           log=lambda row: print(json.dumps(row), flush=True))
 
 
