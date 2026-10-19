@@ -237,4 +237,33 @@ def test_replay_buffer_evicts_oldest_episode_from_overfull_domain():
     assert "a2" in domain_a_ids
     assert "a3" in domain_a_ids
 
+
+def test_replay_buffer_samples_across_domains():
+    buffer = ReplayBuffer(capacity=10)
+
+    episodes = [
+        {"id": "a1", "domain": "domain_a", "age": 0},
+        {"id": "a2", "domain": "domain_a", "age": 1},
+        {"id": "a3", "domain": "domain_a", "age": 2},
+        {"id": "b1", "domain": "domain_b", "age": 3},
+        {"id": "c1", "domain": "domain_c", "age": 6},
+    ]
+
+    for episode in episodes:
+        buffer.add(episode)
+
+    sampled = buffer.sample_domain_balanced(size=3)
+
+    assert len(sampled) == 3
+
+    sampled_domains = {
+        episode["domain"]
+        for episode in sampled
+    }
+
+    assert sampled_domains == {
+        "domain_a",
+        "domain_b",
+        "domain_c",
+    }
     

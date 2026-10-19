@@ -491,6 +491,76 @@ class OnlineLearner:
             "decisions": len(action_batch),
         }
 
+    def consolidate(
+        self,
+        replay_buffer,
+        sample_size: int,
+        cards: torch.Tensor,
+        heads,
+        optimizer,
+        anchor_lambda: float = 0.0,
+    ) -> dict:
+        replay_episodes = replay_buffer.sample_domain_balanced(
+            size=sample_size
+        )
+
+        if not replay_episodes:
+            raise ValueError("replay buffer is empty")
+
+        state_batches = []
+        action_batch = []
+        return_batches = []
+
+        for episode in replay_episodes:
+            states = episode["states"]
+            actions = episode["actions"]
+            returns = episode["returns"]
+
+            if len(states) != len(actions) or len(states) != len(returns):
+                raise ValueError(
+                    "replay states, actions and returns must align"
+                )
+
+            state_batches.append(states)
+            action_batch.extend(actions)
+            return_batches.append(returns)
+
+        states = torch.cat(
+            state_batches,
+            dim=0,
+        )
+
+        returns = torch.cat(
+            return_batches,
+            dim=0,
+        )
+
+        choose_batch, halt_batch = self.extract_action_batches(
+            states=states,
+            actions=action_batch,
+            returns=returns,
+        )
+
+        loss = self.train_action_value_step(
+            heads=heads,
+            optimizer=optimizer,
+            cards=cards,
+            choose_batch=choose_batch,
+            halt_batch=halt_batch,
+            anchor_lambda=anchor_lambda,
+        )
+
+        # Consolidation completed successfully.
+        # The newly updated parameters become the new stable anchor.
+        self.set_anchor(heads)
+
+        return {
+            "loss": loss,
+            "replay_episodes": len(replay_episodes),
+            "decisions": len(action_batch),
+            "anchor_reset": True,
+        }
+
     def set_anchor(self, heads) -> None:
         self.anchor_state = {
             name: parameter.detach().clone()

@@ -1,3 +1,6 @@
+from numpy.ma import size
+
+
 class ReplayBuffer:
     def __init__(
         self,
@@ -31,7 +34,7 @@ class ReplayBuffer:
         # Global buffer capacity.
         if len(self.buffer) > self.capacity:
             self.buffer.pop(0)
-            
+
     def increment_ages(self) -> None:
         for episode in self.buffer:
             episode["age"] = episode.get("age", 0) + 1
@@ -76,6 +79,66 @@ class ReplayBuffer:
                     break
 
         return sampled
+
+    
+    def sample_domain_balanced(self, size: int = 10) -> list[dict]:
+        if size <= 0 or not self.buffer:
+            return []
+
+        target_size = min(size, len(self.buffer))
+
+        # Group stored episodes by domain.
+        domain_buckets = {}
+
+        for episode in self.buffer:
+            domain = episode.get("domain")
+
+            if domain not in domain_buckets:
+                domain_buckets[domain] = []
+
+            domain_buckets[domain].append(episode)
+
+        selected = []
+
+        # First take one episode from every available domain.
+        # Use the newest episode from each domain first.
+        for domain in domain_buckets:
+            if len(selected) >= target_size:
+                break
+
+            selected.append(
+                domain_buckets[domain][-1]
+        )
+
+        # If more samples are required, continue in a
+        # round-robin manner across the domains.
+        depth = 2
+
+        while len(selected) < target_size:
+            added_episode = False
+
+            for domain in domain_buckets:
+                bucket = domain_buckets[domain]
+
+                if len(bucket) >= depth:
+                    selected.append(
+                        bucket[-depth]
+                    )
+
+                    added_episode = True
+
+                    if len(selected) >= target_size:
+                        break
+
+            if not added_episode:
+                break
+
+            depth += 1
+
+                
+        return selected    
+
+    
 
     def sample(self, size=10):
         return self.buffer[-size:]  

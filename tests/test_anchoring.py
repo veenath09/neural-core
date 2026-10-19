@@ -181,3 +181,111 @@ def test_rollout_training_accepts_anchor_lambda():
 
     assert isinstance(result["loss"], float)
     assert result["episodes"] == len(episodes)
+
+
+def test_consolidation_resets_anchor_after_training():
+    torch.manual_seed(0)
+
+    learner = OnlineLearner()
+
+    heads = ActionValueHeads(
+        d=128,
+        card_dim=6,
+    )
+
+    optimizer = torch.optim.SGD(
+        heads.parameters(),
+        lr=0.01,
+    )
+
+    learner.set_anchor(heads)
+
+    # Create some weight drift first.
+    with torch.no_grad():
+        heads.halt.weight.add_(0.1)
+
+    penalty_before = learner.anchor_penalty(heads)
+
+    assert penalty_before.item() > 0.0
+
+    replay_buffer = ReplayBuffer(
+        capacity=10
+    )
+
+    replay_buffer.add(
+        {
+            "states": torch.randn(2, 128),
+            "actions": [
+                {
+                    "phase": "choose",
+                    "model": 0,
+                    "halt": None,
+                },
+                {
+                    "phase": "halt",
+                    "model": None,
+                    "halt": "stop",
+                },
+            ],
+            "returns": torch.tensor(
+                [0.8, 0.8]
+            ),
+            "domain": "domain_a",
+            "age": 1,
+        }
+    )
+
+    replay_buffer.add(
+        {
+            "states": torch.randn(2, 128),
+            "actions": [
+                {
+                    "phase": "choose",
+                    "model": 1,
+                    "halt": None,
+                },
+                {
+                    "phase": "halt",
+                    "model": 1,
+                    "halt": "escalate",
+                },
+            ],
+            "returns": torch.tensor(
+                [0.6, 0.6]
+            ),
+            "domain": "domain_b",
+            "age": 4,
+        }
+    )
+
+    cards = torch.randn(4, 6)
+
+    result = learner.consolidate(
+        replay_buffer=replay_buffer,
+        sample_size=2,
+        cards=cards,
+        heads=heads,
+        optimizer=optimizer,
+        anchor_lambda=0.5,
+    )
+
+    penalty_after = learner.anchor_penalty(
+        heads
+    )
+
+    assert isinstance(
+        result["loss"],
+        float,
+    )
+
+    assert result["replay_episodes"] == 2
+
+    assert result["anchor_reset"] is True
+
+    assert torch.isclose(
+        penalty_after,
+        torch.tensor(0.0),
+        atol=1e-8,
+    )
+
+    
