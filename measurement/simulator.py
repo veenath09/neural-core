@@ -212,6 +212,82 @@ class Simulator:
             if self._episode.affordable(state, index)
         ]
 
+    def charge_routing_cost(self, cost_usd: float) -> None:
+        """Charge routing overhead against the episode budget.
+
+        The routing charge is separate from model execution,
+        but both expenses count toward total episode spending.
+
+        This method updates the frozen environment state
+        using dataclasses.replace().
+
+        It does not:
+        - Execute an AI model.
+        - Change the execution step or round.
+        - Add an execution trace item.
+        - Modify the underlying OutcomeTable.
+
+        The evaluation harness will call this method after
+        an LLM routing decision and before model execution.
+        """
+        from dataclasses import replace
+
+        if isinstance(cost_usd, bool):
+            raise ValueError(
+                "Routing cost must be a nonnegative finite number"
+            )
+
+        try:
+            charge = float(cost_usd)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError(
+                "Routing cost must be a nonnegative finite number"
+            ) from exc
+
+        if not math.isfinite(charge) or charge < 0:
+            raise ValueError(
+                "Routing cost must be a nonnegative finite number"
+            )
+
+        state = self._state
+
+        if state.done:
+            raise ValueError(
+                "Cannot charge routing cost after episode completion"
+            )
+
+        if charge > state.budget_left:
+            raise ValueError(
+                "Routing cost exceeds remaining episode budget"
+            )
+
+        self._state = replace(
+            state,
+            budget_left=state.budget_left - charge,
+            spent=state.spent + charge,
+        )
+
+    def terminate(self) -> None:
+        """End the episode without executing another model.
+
+        Used when a router call fails or exceeds the
+        remaining budget.
+
+        Previously charged costs and execution history
+        are preserved.
+        """
+        from dataclasses import replace
+
+        if self._state.done:
+            raise ValueError(
+                "Episode is already complete"
+            )
+
+        self._state = replace(
+            self._state,
+            done=True,
+        )
+
     def apply(self, strategy: Strategy) -> SimulationTransition:
         """Execute one Strategy through the existing environment."""
 
