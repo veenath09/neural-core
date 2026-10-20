@@ -567,3 +567,36 @@ def test_online_learner_trains_full_factored_strategy():
         before,
         after,
     )
+
+def test_train_strategy_batch_rejects_empty_batch():
+    learner = OnlineLearner()
+
+    heads = BranchingValueHeads(
+        d=128,
+        dimensions={
+            "memory": 3,
+            "depth": 3,
+            "verification": 3,
+            "topology": 3,
+        },
+    )
+
+    optimizer = torch.optim.SGD(
+        heads.parameters(),
+        lr=0.01,
+    )
+
+    z_h = torch.empty((0, 128))
+    returns = torch.empty((0,))
+
+    with pytest.raises(
+        ValueError,
+        match="at least one strategy decision",
+    ):
+        learner.train_strategy_batch(
+            heads=heads,
+            optimizer=optimizer,
+            z_h=z_h,
+            strategies=[],
+            returns=returns,
+        )

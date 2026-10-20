@@ -137,6 +137,11 @@ class OnlineLearner:
                 "z_h, strategies and returns must have the same length"
         )
 
+        if len(z_h) == 0:
+            raise ValueError(
+                "train_strategy_batch expects at least one strategy decision"
+        )
+
         encoded = [
             encode_strategy_actions(strategy)
             for strategy in strategies
