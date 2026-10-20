@@ -321,3 +321,67 @@ def test_train_action_value_step_supports_choose_only_batch():
         model_before,
         heads.model_match.weight.detach(),
     )
+
+def test_train_action_value_step_supports_halt_only_batch():
+    torch.manual_seed(0)
+
+    learner = OnlineLearner()
+
+    heads = ActionValueHeads(
+        d=128,
+        card_dim=6,
+    )
+
+    optimizer = torch.optim.SGD(
+        heads.parameters(),
+        lr=0.05,
+    )
+
+    states = torch.randn(2, 128)
+
+    actions = [
+        {
+            "phase": "halt",
+            "model": None,
+            "halt": "stop",
+        },
+        {
+            "phase": "halt",
+            "model": None,
+            "halt": "escalate",
+        },
+    ]
+
+    returns = torch.tensor(
+        [0.8, 0.6],
+        dtype=torch.float32,
+    )
+
+    cards = torch.randn(3, 6)
+
+    choose_batch, halt_batch = learner.extract_action_batches(
+        states=states,
+        actions=actions,
+        returns=returns,
+    )
+
+    halt_before = (
+        heads.halt.weight
+        .detach()
+        .clone()
+    )
+
+    loss = learner.train_action_value_step(
+        heads=heads,
+        optimizer=optimizer,
+        cards=cards,
+        choose_batch=choose_batch,
+        halt_batch=halt_batch,
+    )
+
+    assert isinstance(loss, float)
+
+    assert not torch.equal(
+        halt_before,
+        heads.halt.weight.detach(),
+    )
