@@ -454,7 +454,8 @@ class OnlineLearner:
             stale = self.out_dir / f"v{self.version - self.cfg.keep_versions}.pt"
             if stale.exists():
                 stale.unlink()
-        row = {"update": self.updates, "loss": float(loss.detach()), "grad_norm": grad_norm, "lr": self.lr,
+        row = {"type": "update", "update": self.updates, "loss": float(loss.detach()), "grad_norm": grad_norm,
+               "lr": self.lr,
                "policy_version": self.version, "batch": len(batch), "alarms": alarms} | stats
         with (self.out_dir / "log.jsonl").open("a") as f:
             f.write(json.dumps(row) + "\n")

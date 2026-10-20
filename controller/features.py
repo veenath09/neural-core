@@ -22,7 +22,8 @@ TRACE_FEATS = 7
 
 
 def _log_cost(usd: float) -> float:
-    return math.log10(usd + 1e-9) / 4 + 1
+    # live, a call can cost more than the remaining budget (the simulator blocks such calls): clamp at 0
+    return math.log10(max(usd, 0.0) + 1e-9) / 4 + 1
 
 
 @dataclass
