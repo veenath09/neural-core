@@ -32,7 +32,7 @@ from train.train import make_episodes
 
 GRID_W = (0.05, 0.1, 0.2, 0.3, 0.45, 0.6, 0.8, 1.0, 1.5, 2.0, 3.0)
 GRID_H = (0.0, 1.0, 2.0, 3.0)
-GRID_K = (1.0, 2.0, 3.0, 5.0, 10.0)
+GRID_K = (1.0, 2.0, 3.0, 5.0, 10.0, 20.0, 50.0)  # pilots sat at 10: widened
 SHARPNESS_TOL = 0.02
 
 
@@ -85,10 +85,12 @@ def _rewards(model, skeletons, world, cost_ref, lams) -> dict[int, dict]:
 
 
 def calibrate_policy_init(model, skeletons, world, cost_ref: float, lams=LAMS, grid_w=GRID_W,
-                          grid_h=GRID_H, grid_k=GRID_K, floor_tol: float | None = 0.05, refits: int = 3) -> dict:
+                          grid_h=GRID_H, grid_k=GRID_K, floor_tol: float | None = 0.0, refits: int = 3) -> dict:
     """See the module docstring. With floor_tol, a fit that leaves some lambda more than floor_tol below the
     default start on these skeletons is refitted with 4x weight on the failing lambdas, up to `refits` times
-    (a straight line in ln lambda can miss one end of the grid: the seed-0 pilot lost 0.1 at lambda 2)."""
+    (a straight line in ln lambda can miss one end of the grid: the seed-0 pilot lost 0.1 at lambda 2).
+    floor_tol is 0 on these training episodes so the start keeps headroom for the guard's 0.05 on val:
+    with 0.05 here every v5 calibration passed on train and failed the guard on val at lambda 2."""
     lin = model.heads.lam_adj
     default_state = {k: v.clone() for k, v in lin.state_dict().items()}
     default = _rewards(model, skeletons, world, cost_ref, lams)
