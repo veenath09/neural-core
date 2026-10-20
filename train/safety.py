@@ -44,6 +44,50 @@ class RollbackManager:
             self._state
         )
 
+class CanaryEvaluator:
+    def __init__(
+        self,
+        gate: ValidationGate,
+    ):
+        self.gate = gate
+
+    def evaluate(
+        self,
+        baseline_scores: list[float],
+        candidate_scores: list[float],
+    ) -> dict:
+        if not baseline_scores or not candidate_scores:
+            raise ValueError(
+                "canary score lists must not be empty"
+            )
+
+        if len(baseline_scores) != len(candidate_scores):
+            raise ValueError(
+                "baseline_scores and candidate_scores "
+                "must have the same length"
+            )
+
+        baseline_mean = (
+            sum(baseline_scores)
+            / len(baseline_scores)
+        )
+
+        candidate_mean = (
+            sum(candidate_scores)
+            / len(candidate_scores)
+        )
+
+        accepted = self.gate.accept(
+            baseline_score=baseline_mean,
+            candidate_score=candidate_mean,
+        )
+
+        return {
+            "accepted": accepted,
+            "baseline_mean": baseline_mean,
+            "candidate_mean": candidate_mean,
+            "n_canary": len(candidate_scores),
+        }
 
 def validate_or_rollback(
         module,
