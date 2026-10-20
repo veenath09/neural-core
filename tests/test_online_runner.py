@@ -3,7 +3,7 @@ from train.online_runner import (
     run_online_update_from_scores,
 )
 from types import SimpleNamespace
-
+import json
 import torch
 from measurement.scorer import Score
 from train.online_learner import OnlineLearner
@@ -485,3 +485,37 @@ def test_online_update_from_scores_passes_c3_rewards_to_learner():
         0.75,
         -0.10,
     ]
+
+def test_online_update_can_persist_research_record(tmp_path):
+    learner = FakeLearner()
+    replay_buffer = EmptyReplayBuffer()
+
+    log_path = tmp_path / "c2_updates.jsonl"
+
+    result = run_online_update(
+        learner=learner,
+        rollout_output=object(),
+        rewards=[0.8],
+        cards=object(),
+        heads=object(),
+        optimizer=object(),
+        replay_buffer=replay_buffer,
+        replay_sample_size=4,
+        log_path=log_path,
+    )
+
+    lines = log_path.read_text(
+        encoding="utf-8",
+    ).splitlines()
+
+    assert len(lines) == 1
+
+    record = json.loads(lines[0])
+
+    assert record["episode_count"] == 1
+    assert record["fresh_loss"] == 0.5
+    assert record["reward_mean"] == 0.8
+    assert record["stored_episodes"] == 1
+    assert record["accepted"] is None
+
+    assert result["logged"] is True
