@@ -789,6 +789,20 @@ class OnlineLearner:
         if self.anchor_state is None:
             raise ValueError("anchor has not been set")
 
+        current_parameter_names = {
+            name
+            for name, _ in heads.named_parameters()
+            }
+
+        anchor_parameter_names = set(
+            self.anchor_state.keys()
+            )
+
+        if current_parameter_names != anchor_parameter_names:
+            raise ValueError(
+                "anchor state is incompatible with current heads"
+        )
+
         penalties = []
 
         for name, parameter in heads.named_parameters():

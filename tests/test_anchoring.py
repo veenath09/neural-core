@@ -1,5 +1,5 @@
 import torch
-
+import pytest
 from train.action_value_heads import ActionValueHeads
 from train.online_learner import OnlineLearner
 from train.replay_buffer import ReplayBuffer
@@ -391,5 +391,26 @@ def test_consolidation_aligns_replay_tensors_with_heads():
 
     assert isinstance(result["loss"], float)
     assert result["anchor_reset"] is True
+
+def test_anchor_penalty_rejects_incompatible_anchor_state():
+    learner = OnlineLearner()
+
+    heads = ActionValueHeads(
+        d=128,
+        card_dim=6,
+    )
+
+    learner.set_anchor(heads)
+
+    # Simulate an anchor created for an incompatible
+    # or changed head architecture.
+    removed_name = next(iter(learner.anchor_state))
+    del learner.anchor_state[removed_name]
+
+    with pytest.raises(
+        ValueError,
+        match="anchor state is incompatible with current heads",
+    ):
+        learner.anchor_penalty(heads)
 
     
