@@ -41,3 +41,24 @@ def encode_strategy_actions(
             strategy.topology
         ],
     }
+
+def encode_tool_actions(
+    strategy: Strategy,
+    tool_catalog: list[str],
+) -> list[int]:
+    if len(tool_catalog) != len(set(tool_catalog)):
+        raise ValueError("tool_catalog contains duplicate tools")
+
+    unknown_tools = set(strategy.tools) - set(tool_catalog)
+
+    if unknown_tools:
+        raise ValueError(
+            f"strategy contains tools not in catalog: {sorted(unknown_tools)}"
+        )
+
+    selected_tools = set(strategy.tools)
+
+    return [
+        1 if tool_name in selected_tools else 0
+        for tool_name in tool_catalog
+    ]

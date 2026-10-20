@@ -4,7 +4,10 @@ import pytest
 from controller.contracts import Strategy
 from train.branching_heads import BranchingValueHeads
 from train.online_learner import OnlineLearner
-from train.strategy_actions import encode_strategy_actions
+from train.strategy_actions import (
+    encode_strategy_actions,
+    encode_tool_actions,
+)
 
 def test_encode_strategy_actions_uses_contract_values():
     strategy = Strategy(
@@ -257,3 +260,79 @@ def test_online_learner_trains_multiple_strategy_decisions():
         before,
         after,
     )
+
+def test_encode_tool_actions_uses_dynamic_tool_catalog():
+    strategy = Strategy(
+        step_id="step-1",
+        round=1,
+        model_id="model-a",
+        halt="stop",
+        tools=[
+            "search",
+            "retrieval",
+        ],
+    )
+
+    tool_catalog = [
+        "search",
+        "calculator",
+        "retrieval",
+    ]
+
+    encoded = encode_tool_actions(
+        strategy=strategy,
+        tool_catalog=tool_catalog,
+    )
+
+    assert encoded == [
+        1,
+        0,
+        1,
+    ]
+
+def test_encode_tool_actions_rejects_unknown_tool():
+    strategy = Strategy(
+        step_id="step-1",
+        round=1,
+        model_id="model-a",
+        halt="stop",
+        tools=["unknown-tool"],
+    )
+
+    tool_catalog = [
+        "search",
+        "calculator",
+    ]
+
+    with pytest.raises(
+        ValueError,
+        match="tools not in catalog",
+    ):
+        encode_tool_actions(
+            strategy=strategy,
+            tool_catalog=tool_catalog,
+        )
+
+
+def test_encode_tool_actions_rejects_duplicate_catalog():
+    strategy = Strategy(
+        step_id="step-1",
+        round=1,
+        model_id="model-a",
+        halt="stop",
+        tools=["search"],
+    )
+
+    tool_catalog = [
+        "search",
+        "search",
+    ]
+
+    with pytest.raises(
+        ValueError,
+        match="duplicate tools",
+    ):
+        encode_tool_actions(
+            strategy=strategy,
+            tool_catalog=tool_catalog,
+        )
