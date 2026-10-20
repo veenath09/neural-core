@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import random
-
+import math
 import torch
 
 
@@ -34,6 +34,20 @@ class CostBoundedExplorer:
             raise ValueError(
                 "values and costs must have the same length"
             )
+
+        if not math.isfinite(budget) or budget < 0:
+            raise ValueError(
+                "budget must be a finite non-negative value"
+        )
+
+
+        if (
+            not torch.isfinite(costs).all()
+            or torch.any(costs < 0)
+        ):
+            raise ValueError(
+                "costs must contain finite non-negative values"
+        )
 
         affordable_indices = [
             index

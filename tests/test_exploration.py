@@ -137,3 +137,71 @@ def test_explorer_works_with_action_value_head_scores():
 
     assert action == expected_action
     assert costs[action].item() <= budget
+
+@pytest.mark.parametrize(
+    "invalid_cost",
+    [
+        -0.01,
+        float("nan"),
+        float("inf"),
+    ],
+)
+def test_explorer_rejects_invalid_model_costs(invalid_cost):
+    explorer = CostBoundedExplorer(
+        epsilon=0.0,
+        seed=0,
+    )
+
+    values = torch.tensor([
+        0.2,
+        0.8,
+    ])
+
+    costs = torch.tensor([
+        0.01,
+        invalid_cost,
+    ])
+
+    with pytest.raises(
+        ValueError,
+        match="costs must contain finite non-negative values",
+    ):
+        explorer.select_model(
+            values=values,
+            costs=costs,
+            budget=0.05,
+        )
+
+@pytest.mark.parametrize(
+    "invalid_budget",
+    [
+        -0.01,
+        float("nan"),
+        float("inf"),
+    ],
+)
+def test_explorer_rejects_invalid_budget(invalid_budget):
+    explorer = CostBoundedExplorer(
+        epsilon=0.0,
+        seed=0,
+    )
+
+    values = torch.tensor([
+        0.2,
+        0.8,
+    ])
+
+    costs = torch.tensor([
+        0.01,
+        0.03,
+    ])
+
+    with pytest.raises(
+        ValueError,
+        match="budget must be a finite non-negative value",
+    ):
+        explorer.select_model(
+            values=values,
+            costs=costs,
+            budget=invalid_budget,
+        )
