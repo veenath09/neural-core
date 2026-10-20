@@ -620,6 +620,25 @@ class OnlineLearner:
             dim=0,
         )
 
+
+        reference_parameter = next(heads.parameters())
+
+        states = states.to(
+            device=reference_parameter.device,
+            dtype=reference_parameter.dtype,
+        )
+
+        returns = returns.to(
+            device=reference_parameter.device,
+            dtype=reference_parameter.dtype,
+        )
+
+
+        cards = cards.to(
+            device=reference_parameter.device,
+            dtype=reference_parameter.dtype,
+        )
+
         choose_batch, halt_batch = self.extract_action_batches(
             states=states,
             actions=action_batch,

@@ -179,3 +179,51 @@ def test_failed_replay_storage_does_not_age_existing_episodes():
 
     # Failed storage must not mutate existing replay data.
     assert replay_buffer.buffer[0]["age"] == 4
+
+
+def test_replay_training_aligns_replay_tensors_with_heads():
+    learner = OnlineLearner()
+
+    replay_buffer = ReplayBuffer(
+        capacity=10,
+        per_domain_capacity=5,
+    )
+
+    # Replay is stored as normal float32 CPU tensors.
+    replay_buffer.add({
+        "states": torch.randn(2, 128),
+        "actions": [
+            {"phase": "choose", "model": 1, "halt": None},
+            {"phase": "halt", "model": None, "halt": "stop"},
+        ],
+        "returns": torch.tensor([0.8, 0.8]),
+        "domain": "domain_a",
+        "age": 2,
+    })
+
+    # Simulate a learner running with a different tensor dtype.
+    heads = ActionValueHeads(
+        d=128,
+        card_dim=6,
+    ).double()
+
+    optimizer = torch.optim.SGD(
+        heads.parameters(),
+        lr=0.01,
+    )
+
+    cards = torch.randn(
+        4,
+        6,
+        dtype=torch.float64,
+    )
+
+    result = learner.train_from_replay(
+        replay_buffer=replay_buffer,
+        sample_size=1,
+        cards=cards,
+        heads=heads,
+        optimizer=optimizer,
+    )
+
+    assert isinstance(result["loss"], float)
