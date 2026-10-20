@@ -806,7 +806,14 @@ class OnlineLearner:
         penalties = []
 
         for name, parameter in heads.named_parameters():
-            anchor_parameter = self.anchor_state[name].to(
+            anchor_parameter = self.anchor_state[name]
+
+            if anchor_parameter.shape != parameter.shape:
+                raise ValueError(
+                    "anchor state is incompatible with current heads"
+            )
+
+            anchor_parameter = anchor_parameter.to(
                 device=parameter.device,
                 dtype=parameter.dtype,
             )

@@ -413,4 +413,28 @@ def test_anchor_penalty_rejects_incompatible_anchor_state():
     ):
         learner.anchor_penalty(heads)
 
+def test_anchor_penalty_rejects_incompatible_anchor_shape():
+    learner = OnlineLearner()
+
+    heads = ActionValueHeads(
+        d=128,
+        card_dim=6,
+    )
+
+    learner.set_anchor(heads)
+
+    original = learner.anchor_state["halt.weight"]
+
+    learner.anchor_state["halt.weight"] = torch.randn(
+        original.shape[0] + 1,
+        *original.shape[1:],
+        dtype=original.dtype,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="anchor state is incompatible with current heads",
+    ):
+        learner.anchor_penalty(heads)
+
     
