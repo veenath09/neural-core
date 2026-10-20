@@ -831,30 +831,39 @@ class OnlineLearner:
         path,
         heads,
         optimizer,
+        metadata=None,
     ) -> None:
         checkpoint = {
             "heads_state_dict": heads.state_dict(),
-             "optimizer_state_dict": optimizer.state_dict(),
+            "optimizer_state_dict": optimizer.state_dict(),
             "episode_count": self.episode_count,
             "gamma": self.gamma,
             "anchor_state": (
-               None
-               if self.anchor_state is None
-               else {
-                  name: parameter.detach().cpu().clone()
-                  for name, parameter in self.anchor_state.items()
-              }
-        ),
-}
+                None
+                if self.anchor_state is None
+                else {
+                    name: parameter.detach().cpu().clone()
+                    for name, parameter in self.anchor_state.items()
+                }
+            ),
+            "metadata": (
+                {}
+                if metadata is None
+                else dict(metadata)
+            ),
+        }
 
-        torch.save(checkpoint, path)
+        torch.save(
+            checkpoint,
+            path,
+        )
 
     def load_checkpoint(
         self,
         path,
         heads,
         optimizer,
-    ) -> None:
+    ) -> dict:
         checkpoint = torch.load(
             path,
             map_location="cpu",
@@ -869,9 +878,15 @@ class OnlineLearner:
             checkpoint["optimizer_state_dict"]
         )
 
-        self.episode_count = checkpoint["episode_count"]
+        self.episode_count = checkpoint[
+            "episode_count"
+        ]
+
         self.gamma = checkpoint["gamma"]
-        anchor_state = checkpoint.get("anchor_state")
+
+        anchor_state = checkpoint.get(
+            "anchor_state"
+        )
 
         self.anchor_state = (
             None
@@ -879,8 +894,14 @@ class OnlineLearner:
             else {
                 name: parameter.detach().clone()
                 for name, parameter in anchor_state.items()
-        }
-    )
+            }
+        )
+
+        # Old checkpoints may not contain metadata.
+        return checkpoint.get(
+            "metadata",
+            {},
+        )
 
         
     def update(
