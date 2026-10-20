@@ -7,6 +7,11 @@ from train.online_learner import OnlineLearner
 from train.action_value_heads import ActionValueHeads
 from train.replay_buffer import ReplayBuffer
 
+from train.safety import (
+    ValidationGate,
+    RollbackManager,
+)
+
 class FakeReplayBuffer:
     def __len__(self):
         return 2
@@ -181,3 +186,215 @@ def test_online_update_uses_learner_episode_count_once():
     assert result["fresh"]["episodes"] == 1
     assert result["replay"] is None
     assert result["stored_episodes"] == 1
+
+
+class MutatingLearner(FakeLearner):
+    def train_from_rollout(
+        self,
+        rollout_output,
+        rewards,
+        cards,
+        heads,
+        optimizer,
+        anchor_lambda=0.0,
+    ):
+        self.calls.append("fresh")
+
+        # Simulate a candidate model update.
+        with torch.no_grad():
+            heads.halt.weight.add_(1.0)
+
+        return {
+            "loss": 0.5,
+            "episodes": 1,
+            "decisions": 2,
+        }
+
+
+def test_online_update_rolls_back_rejected_candidate():
+    learner = MutatingLearner()
+
+    heads = ActionValueHeads(
+        d=128,
+        card_dim=6,
+    )
+
+    optimizer = torch.optim.SGD(
+    heads.parameters(),
+    lr=0.01,
+    )
+
+    original_weight = (
+        heads.halt.weight
+        .detach()
+        .clone()
+    )
+
+    gate = ValidationGate(
+        max_degradation=0.05,
+    )
+
+    rollback = RollbackManager()
+
+    scores = iter([
+        0.80,  # baseline before training
+        0.70,  # candidate after training
+    ])
+
+    def validation_fn(module):
+        return next(scores)
+
+    result = run_online_update(
+        learner=learner,
+        rollout_output=object(),
+        rewards=[0.8],
+        cards=object(),
+        heads=heads,
+        optimizer=optimizer,
+        replay_buffer=EmptyReplayBuffer(),
+        replay_sample_size=4,
+        validation_gate=gate,
+        rollback_manager=rollback,
+        validation_fn=validation_fn,
+    )
+
+    assert result["validation"]["accepted"] is False
+    assert result["validation"]["baseline_score"] == 0.80
+    assert result["validation"]["candidate_score"] == 0.70
+
+    assert torch.allclose(
+        heads.halt.weight,
+        original_weight,
+    )
+
+
+def test_online_update_keeps_accepted_candidate():
+    learner = MutatingLearner()
+
+    heads = ActionValueHeads(
+        d=128,
+        card_dim=6,
+    )
+
+    optimizer = torch.optim.SGD(
+    heads.parameters(),
+    lr=0.01,
+    )
+
+    original_weight = (
+        heads.halt.weight
+        .detach()
+        .clone()
+    )
+
+    gate = ValidationGate(
+        max_degradation=0.05,
+    )
+
+    rollback = RollbackManager()
+
+    scores = iter([
+        0.80,  # baseline before training
+        0.78,  # candidate after training
+    ])
+
+    def validation_fn(module):
+        return next(scores)
+
+    result = run_online_update(
+        learner=learner,
+        rollout_output=object(),
+        rewards=[0.8],
+        cards=object(),
+        heads=heads,
+        optimizer=optimizer,
+        replay_buffer=EmptyReplayBuffer(),
+        replay_sample_size=4,
+        validation_gate=gate,
+        rollback_manager=rollback,
+        validation_fn=validation_fn,
+    )
+
+    assert result["validation"]["accepted"] is True
+    assert result["validation"]["baseline_score"] == 0.80
+    assert result["validation"]["candidate_score"] == 0.78
+
+    assert not torch.allclose(
+        heads.halt.weight,
+        original_weight,
+    )
+
+class OptimizerMutatingLearner(FakeLearner):
+    def train_from_rollout(
+        self,
+        rollout_output,
+        rewards,
+        cards,
+        heads,
+        optimizer,
+        anchor_lambda=0.0,
+    ):
+        self.calls.append("fresh")
+
+        optimizer.zero_grad()
+
+        loss = heads.halt.weight.sum()
+        loss.backward()
+
+        optimizer.step()
+
+        return {
+            "loss": float(loss.detach()),
+            "episodes": 1,
+            "decisions": 1,
+        }
+
+
+def test_rejected_candidate_restores_optimizer_state():
+    learner = OptimizerMutatingLearner()
+
+    heads = ActionValueHeads(
+        d=128,
+        card_dim=6,
+    )
+
+    optimizer = torch.optim.Adam(
+        heads.parameters(),
+        lr=0.01,
+    )
+
+    assert len(optimizer.state) == 0
+
+    gate = ValidationGate(
+        max_degradation=0.05,
+    )
+
+    rollback = RollbackManager()
+
+    scores = iter([
+        0.80,  # baseline
+        0.60,  # rejected candidate
+    ])
+
+    def validation_fn(module):
+        return next(scores)
+
+    result = run_online_update(
+        learner=learner,
+        rollout_output=object(),
+        rewards=[0.8],
+        cards=object(),
+        heads=heads,
+        optimizer=optimizer,
+        replay_buffer=EmptyReplayBuffer(),
+        replay_sample_size=4,
+        validation_gate=gate,
+        rollback_manager=rollback,
+        validation_fn=validation_fn,
+    )
+
+    assert result["validation"]["accepted"] is False
+
+    # A rejected candidate must not leave Adam's
+    # momentum/variance state behind.
+    assert len(optimizer.state) == 0
