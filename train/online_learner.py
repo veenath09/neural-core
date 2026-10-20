@@ -18,7 +18,7 @@ class OnlineLearner:
         self.episode_count = 0
         self.gamma = gamma
         self.anchor_state = None
-        
+
     def monte_carlo_returns(
         self,
         reward: float,
@@ -53,6 +53,14 @@ class OnlineLearner:
         for name, branch_values in values.items():
             if name not in actions:
                 raise ValueError(f"missing action for branch {name!r}")
+
+            if (
+                branch_values.shape[0] != len(returns)
+                or len(actions[name]) != len(returns)
+            ):
+                raise ValueError(
+                    "branch batch sizes must match returns"
+                )
 
             chosen = branch_values.gather(
                 1,

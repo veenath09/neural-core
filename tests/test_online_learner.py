@@ -113,6 +113,32 @@ def test_monte_carlo_loss_updates_branching_heads():
     for parameter in heads.parameters():
         assert parameter.grad is not None
 
+def test_branching_loss_rejects_mismatched_batch_sizes():
+    learner = OnlineLearner()
+
+    values = {
+        "memory": torch.randn(2, 3),
+    }
+
+    actions = {
+        "memory": torch.tensor([0]),
+    }
+
+    returns = torch.tensor([0.8, 0.4])
+
+    with pytest.raises(
+        ValueError,
+        match="branch batch sizes must match returns",
+    ):
+        learner.branching_loss(
+            values=values,
+            actions=actions,
+            returns=returns,
+        )
+
+
+
+
 def test_online_step_updates_branching_head_weights():
     torch.manual_seed(0)
 
