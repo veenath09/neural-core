@@ -1,8 +1,11 @@
-from train.online_runner import run_online_update
+from train.online_runner import (
+    run_online_update,
+    run_online_update_from_scores,
+)
 from types import SimpleNamespace
 
 import torch
-
+from measurement.scorer import Score
 from train.online_learner import OnlineLearner
 from train.action_value_heads import ActionValueHeads
 from train.replay_buffer import ReplayBuffer
@@ -398,3 +401,87 @@ def test_rejected_candidate_restores_optimizer_state():
     # A rejected candidate must not leave Adam's
     # momentum/variance state behind.
     assert len(optimizer.state) == 0
+
+
+class RewardCapturingLearner(FakeLearner):
+    def __init__(self):
+        super().__init__()
+        self.seen_rewards = None
+
+    def train_from_rollout(
+        self,
+        rollout_output,
+        rewards,
+        cards,
+        heads,
+        optimizer,
+        anchor_lambda=0.0,
+    ):
+        self.seen_rewards = list(rewards)
+
+        return super().train_from_rollout(
+            rollout_output=rollout_output,
+            rewards=rewards,
+            cards=cards,
+            heads=heads,
+            optimizer=optimizer,
+            anchor_lambda=anchor_lambda,
+        )
+
+
+def test_online_update_from_scores_passes_c3_rewards_to_learner():
+    learner = RewardCapturingLearner()
+
+    rollout_output = SimpleNamespace(
+        results=[
+            object(),
+            object(),
+        ]
+    )
+
+    scores = [
+        Score(
+            quality=0.8,
+            cost_usd=0.01,
+            latency_ms=None,
+            penalty=0.0,
+            lam=0.0,
+            mu=0.0,
+            cost_ref_usd=0.01,
+            latency_ref_ms=None,
+            normalized_cost=1.0,
+            normalized_latency=None,
+            reward=0.75,
+            latency_included=False,
+        ),
+        Score(
+            quality=0.7,
+            cost_usd=0.01,
+            latency_ms=None,
+            penalty=0.0,
+            lam=0.0,
+            mu=0.0,
+            cost_ref_usd=0.01,
+            latency_ref_ms=None,
+            normalized_cost=1.0,
+            normalized_latency=None,
+            reward=-0.10,
+            latency_included=False,
+        ),
+    ]
+
+    run_online_update_from_scores(
+        learner=learner,
+        rollout_output=rollout_output,
+        scores=scores,
+        cards=object(),
+        heads=object(),
+        optimizer=object(),
+        replay_buffer=EmptyReplayBuffer(),
+        replay_sample_size=4,
+    )
+
+    assert learner.seen_rewards == [
+        0.75,
+        -0.10,
+    ]

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from train.safety import validate_or_rollback
-
+from train.reward_adapter import rewards_from_scores
 
 def run_online_update(
     learner,
@@ -91,3 +91,39 @@ def run_online_update(
         "stored_episodes": stored_episodes,
         "validation": validation_result,
     }
+
+def run_online_update_from_scores(
+    learner,
+    rollout_output,
+    scores,
+    cards,
+    heads,
+    optimizer,
+    replay_buffer,
+    replay_sample_size: int,
+    anchor_lambda: float = 0.0,
+    validation_gate=None,
+    rollback_manager=None,
+    validation_fn=None,
+) -> dict:
+    """Run one C2 online update using final C3 Score rewards."""
+
+    rewards = rewards_from_scores(
+        scores,
+        expected_count=len(rollout_output.results),
+    )
+
+    return run_online_update(
+        learner=learner,
+        rollout_output=rollout_output,
+        rewards=rewards,
+        cards=cards,
+        heads=heads,
+        optimizer=optimizer,
+        replay_buffer=replay_buffer,
+        replay_sample_size=replay_sample_size,
+        anchor_lambda=anchor_lambda,
+        validation_gate=validation_gate,
+        rollback_manager=rollback_manager,
+        validation_fn=validation_fn,
+    )
