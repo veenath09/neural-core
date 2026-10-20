@@ -79,3 +79,19 @@ def encode_tool_actions(
         1 if tool_name in selected_tools else 0
         for tool_name in tool_catalog
     ]
+
+
+def encode_factored_strategy_actions(
+    strategy: Strategy,
+    tool_catalog: list[str],
+) -> dict[str, int]:
+    actions = encode_strategy_actions(strategy)
+
+    actions.update(
+        encode_tool_branch_actions(
+            strategy=strategy,
+            tool_catalog=tool_catalog,
+        )
+    )
+
+    return actions

@@ -1,7 +1,10 @@
 from numpy.ma import choose
 import torch
 import torch.nn.functional as F
-from train.strategy_actions import encode_strategy_actions
+from train.strategy_actions import (
+    encode_strategy_actions,
+    encode_factored_strategy_actions,
+)
 
 
 class OnlineLearner:
@@ -163,6 +166,47 @@ class OnlineLearner:
             actions=actions,
             returns=aligned_returns,
     )
+
+    def train_factored_strategy_step(
+        self,
+        heads,
+        optimizer,
+        z_h: torch.Tensor,
+        strategy,
+        tool_catalog: list[str],
+        returns: torch.Tensor,
+    ) -> float:
+        if len(z_h) != 1 or len(returns) != 1:
+            raise ValueError(
+                "train_factored_strategy_step expects exactly one strategy decision"
+            )
+
+        encoded_actions = encode_factored_strategy_actions(
+            strategy=strategy,
+            tool_catalog=tool_catalog,
+        )
+
+        actions = {
+            name: torch.tensor(
+                [index],
+                dtype=torch.long,
+                device=z_h.device,
+            )
+            for name, index in encoded_actions.items()
+        }
+
+        aligned_returns = returns.to(
+            device=z_h.device,
+            dtype=z_h.dtype,
+        )
+
+        return self.train_branching_step(
+            heads=heads,
+            optimizer=optimizer,
+            z_h=z_h,
+            actions=actions,
+            returns=aligned_returns,
+        )
 
     def prepare_episode(
         self,

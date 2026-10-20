@@ -8,6 +8,7 @@ from train.strategy_actions import (
     encode_strategy_actions,
     encode_tool_actions,
     encode_tool_branch_actions,
+    encode_factored_strategy_actions,
 )
 
 def test_encode_strategy_actions_uses_contract_values():
@@ -436,6 +437,121 @@ def test_tool_branch_actions_train_branching_heads():
         optimizer=optimizer,
         z_h=z_h,
         actions=action_tensors,
+        returns=returns,
+    )
+
+    after = (
+        heads.heads["tool::search"].weight
+        .detach()
+        .clone()
+    )
+
+    assert isinstance(loss, float)
+
+    assert not torch.allclose(
+        before,
+        after,
+    )
+
+def test_encode_factored_strategy_actions_combines_all_branches():
+    strategy = Strategy(
+        step_id="step-1",
+        round=1,
+        model_id="model-a",
+        halt="stop",
+        tools=[
+            "search",
+            "retrieval",
+        ],
+        memory="session",
+        depth="high",
+        verification="self_check",
+        topology="parallel",
+    )
+
+    tool_catalog = [
+        "search",
+        "calculator",
+        "retrieval",
+    ]
+
+    actions = encode_factored_strategy_actions(
+        strategy=strategy,
+        tool_catalog=tool_catalog,
+    )
+
+    assert actions == {
+        "memory": 1,
+        "depth": 2,
+        "verification": 1,
+        "topology": 1,
+        "tool::search": 1,
+        "tool::calculator": 0,
+        "tool::retrieval": 1,
+    }
+
+def test_online_learner_trains_full_factored_strategy():
+    torch.manual_seed(0)
+
+    strategy = Strategy(
+        step_id="step-1",
+        round=1,
+        model_id="model-a",
+        halt="stop",
+        tools=[
+            "search",
+            "retrieval",
+        ],
+        memory="session",
+        depth="high",
+        verification="self_check",
+        topology="parallel",
+    )
+
+    tool_catalog = [
+        "search",
+        "calculator",
+        "retrieval",
+    ]
+
+    heads = BranchingValueHeads(
+        d=128,
+        dimensions={
+            "memory": 3,
+            "depth": 3,
+            "verification": 3,
+            "topology": 3,
+            "tool::search": 2,
+            "tool::calculator": 2,
+            "tool::retrieval": 2,
+        },
+    )
+
+    learner = OnlineLearner()
+
+    optimizer = torch.optim.SGD(
+        heads.parameters(),
+        lr=0.01,
+    )
+
+    z_h = torch.randn(1, 128)
+
+    returns = torch.tensor([
+        0.8,
+    ])
+
+    before = (
+        heads.heads["tool::search"].weight
+        .detach()
+        .clone()
+    )
+
+    loss = learner.train_factored_strategy_step(
+        heads=heads,
+        optimizer=optimizer,
+        z_h=z_h,
+        strategy=strategy,
+        tool_catalog=tool_catalog,
         returns=returns,
     )
 
