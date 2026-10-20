@@ -345,4 +345,51 @@ def test_checkpoint_restores_anchor_state(tmp_path):
 
     assert penalty.item() > 0.0
 
+
+def test_consolidation_aligns_replay_tensors_with_heads():
+    learner = OnlineLearner()
+
+    replay_buffer = ReplayBuffer(
+        capacity=10,
+        per_domain_capacity=5,
+    )
+
+    replay_buffer.add({
+        "states": torch.randn(2, 128),
+        "actions": [
+            {"phase": "choose", "model": 1, "halt": None},
+            {"phase": "halt", "model": None, "halt": "stop"},
+        ],
+        "returns": torch.tensor([0.8, 0.8]),
+        "domain": "domain_a",
+        "age": 3,
+    })
+
+    heads = ActionValueHeads(
+        d=128,
+        card_dim=6,
+    ).double()
+
+    optimizer = torch.optim.SGD(
+        heads.parameters(),
+        lr=0.01,
+    )
+
+    cards = torch.randn(
+        4,
+        6,
+        dtype=torch.float64,
+    )
+
+    result = learner.consolidate(
+        replay_buffer=replay_buffer,
+        sample_size=1,
+        cards=cards,
+        heads=heads,
+        optimizer=optimizer,
+    )
+
+    assert isinstance(result["loss"], float)
+    assert result["anchor_reset"] is True
+
     
