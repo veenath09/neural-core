@@ -35,6 +35,11 @@ class CostBoundedExplorer:
                 "values and costs must have the same length"
             )
 
+        if not torch.isfinite(values).all():
+            raise ValueError(
+                "values must contain finite values"
+        )
+
         if not math.isfinite(budget) or budget < 0:
             raise ValueError(
                 "budget must be a finite non-negative value"

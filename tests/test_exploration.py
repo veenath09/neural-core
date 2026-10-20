@@ -205,3 +205,37 @@ def test_explorer_rejects_invalid_budget(invalid_budget):
             costs=costs,
             budget=invalid_budget,
         )
+
+@pytest.mark.parametrize(
+    "invalid_value",
+    [
+        float("nan"),
+        float("inf"),
+        float("-inf"),
+    ],
+)
+def test_explorer_rejects_non_finite_model_values(invalid_value):
+    explorer = CostBoundedExplorer(
+        epsilon=0.0,
+        seed=0,
+    )
+
+    values = torch.tensor([
+        0.2,
+        invalid_value,
+    ])
+
+    costs = torch.tensor([
+        0.01,
+        0.03,
+    ])
+
+    with pytest.raises(
+        ValueError,
+        match="values must contain finite values",
+    ):
+        explorer.select_model(
+            values=values,
+            costs=costs,
+            budget=0.05,
+        )
