@@ -137,7 +137,103 @@ def test_branching_loss_rejects_mismatched_batch_sizes():
         )
 
 
+def test_branching_loss_rejects_out_of_range_action_indices():
+    learner = OnlineLearner()
 
+    values = {
+        "memory": torch.randn(2, 3),
+    }
+
+    actions = {
+        "memory": torch.tensor([0, 3]),
+    }
+
+    returns = torch.tensor([0.8, 0.4])
+
+    with pytest.raises(
+        ValueError,
+        match="branch action indices must be within range",
+    ):
+        learner.branching_loss(
+            values=values,
+            actions=actions,
+            returns=returns,
+        )
+
+def test_branching_loss_rejects_invalid_branch_value_rank():
+    learner = OnlineLearner()
+
+    values = {
+        "memory": torch.randn(2),
+    }
+
+    actions = {
+        "memory": torch.tensor([0, 0]),
+    }
+
+    returns = torch.tensor([0.8, 0.4])
+
+    with pytest.raises(
+        ValueError,
+        match="branch values must be a 2D tensor",
+    ):
+        learner.branching_loss(
+            values=values,
+            actions=actions,
+            returns=returns,
+        )
+
+def test_branching_loss_rejects_invalid_action_rank():
+    learner = OnlineLearner()
+
+    values = {
+        "memory": torch.randn(2, 3),
+    }
+
+    actions = {
+        "memory": torch.tensor([
+            [0],
+            [1],
+        ]),
+    }
+
+    returns = torch.tensor([0.8, 0.4])
+
+    with pytest.raises(
+        ValueError,
+        match="branch actions must be a 1D tensor",
+    ):
+        learner.branching_loss(
+            values=values,
+            actions=actions,
+            returns=returns,
+        )
+
+def test_branching_loss_rejects_non_integer_actions():
+    learner = OnlineLearner()
+
+    values = {
+        "memory": torch.randn(2, 3),
+    }
+
+    actions = {
+        "memory": torch.tensor(
+            [0.0, 1.0],
+            dtype=torch.float32,
+        ),
+    }
+
+    returns = torch.tensor([0.8, 0.4])
+
+    with pytest.raises(
+        ValueError,
+        match="branch actions must use an integer dtype",
+    ):
+        learner.branching_loss(
+            values=values,
+            actions=actions,
+            returns=returns,
+        )
 
 def test_online_step_updates_branching_head_weights():
     torch.manual_seed(0)

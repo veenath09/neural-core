@@ -54,6 +54,11 @@ class OnlineLearner:
             if name not in actions:
                 raise ValueError(f"missing action for branch {name!r}")
 
+            if branch_values.ndim != 2:
+                    raise ValueError(
+                        "branch values must be a 2D tensor"
+            )
+
             if (
                 branch_values.shape[0] != len(returns)
                 or len(actions[name]) != len(returns)
@@ -62,9 +67,35 @@ class OnlineLearner:
                     "branch batch sizes must match returns"
                 )
 
+            branch_actions = actions[name]
+
+            if branch_actions.ndim != 1:
+                    raise ValueError(
+                        "branch actions must be a 1D tensor"
+                )
+
+            if branch_actions.dtype not in (
+                torch.int32,
+                torch.int64,
+            ):
+                raise ValueError(
+                        "branch actions must use an integer dtype"
+                )
+
+            if (
+                torch.any(branch_actions < 0)
+                or torch.any(branch_actions >= branch_values.shape[1])
+                ):
+                raise ValueError(
+                    "branch action indices must be within range"
+                )
+
+
+
+            
             chosen = branch_values.gather(
                 1,
-                actions[name].unsqueeze(1),
+                branch_actions.unsqueeze(1),
             ).squeeze(1)
 
             losses.append(
