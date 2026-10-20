@@ -358,10 +358,45 @@ def test_replay_buffer_rejects_invalid_capacity(capacity):
 
 
 @pytest.mark.parametrize(
+    "capacity",
+    [
+        float("nan"),
+        float("inf"),
+        2.5,
+    ],
+)
+def test_replay_buffer_rejects_non_integer_or_non_finite_capacity(capacity):
+    with pytest.raises(
+        ValueError,
+        match="capacity must be greater than 0",
+    ):
+        ReplayBuffer(capacity=capacity)
+
+@pytest.mark.parametrize(
     "per_domain_capacity",
     [0, -1],
 )
 def test_replay_buffer_rejects_invalid_per_domain_capacity(
+    per_domain_capacity,
+):
+    with pytest.raises(
+        ValueError,
+        match="per_domain_capacity must be greater than 0",
+    ):
+        ReplayBuffer(
+            capacity=10,
+            per_domain_capacity=per_domain_capacity,
+        )
+
+@pytest.mark.parametrize(
+    "per_domain_capacity",
+    [
+        float("nan"),
+        float("inf"),
+        2.5,
+    ],
+)
+def test_replay_buffer_rejects_non_integer_or_non_finite_per_domain_capacity(
     per_domain_capacity,
 ):
     with pytest.raises(

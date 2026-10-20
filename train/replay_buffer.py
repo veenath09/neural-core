@@ -8,18 +8,27 @@ class ReplayBuffer:
         per_domain_capacity=None,
     ):
         
-        if capacity <= 0:
-             raise ValueError(
+        if (
+            not isinstance(capacity, int)
+            or isinstance(capacity, bool)
+            or capacity <= 0
+        ):
+            raise ValueError(
                 "capacity must be greater than 0"
-        )
+            )
+
 
         if (
             per_domain_capacity is not None
-            and per_domain_capacity <= 0
+            and (
+                not isinstance(per_domain_capacity, int)
+                or isinstance(per_domain_capacity, bool)
+                or per_domain_capacity <= 0
+            )
         ):
             raise ValueError(
-                "per_domain_capacity must be greater than 0"
-        )
+                    "per_domain_capacity must be greater than 0"
+            )
 
         self.capacity = capacity
         self.per_domain_capacity = per_domain_capacity
