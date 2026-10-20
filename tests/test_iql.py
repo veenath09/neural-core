@@ -1,5 +1,5 @@
 import torch
-
+import pytest
 from train.iql import (
     expectile_loss,
     advantage_weights,
@@ -100,6 +100,53 @@ def test_advantage_weights_keep_gradients_finite_for_large_advantages():
     assert torch.isfinite(weights).all()
     assert torch.isfinite(q_values.grad).all()
     assert torch.isfinite(v_values.grad).all()
+
+@pytest.mark.parametrize(
+    "invalid_beta",
+    [
+        float("nan"),
+        float("inf"),
+    ],
+)
+def test_advantage_weights_rejects_non_finite_beta(invalid_beta):
+    q_values = torch.tensor([0.8])
+    v_values = torch.tensor([0.5])
+
+    with pytest.raises(
+        ValueError,
+        match="beta must be a finite positive value",
+    ):
+        advantage_weights(
+            q_values=q_values,
+            v_values=v_values,
+            beta=invalid_beta,
+            max_weight=100.0,
+        )
+
+
+@pytest.mark.parametrize(
+    "invalid_max_weight",
+    [
+        float("nan"),
+        float("inf"),
+    ],
+)
+def test_advantage_weights_rejects_non_finite_max_weight(
+    invalid_max_weight,
+):
+    q_values = torch.tensor([0.8])
+    v_values = torch.tensor([0.5])
+
+    with pytest.raises(
+        ValueError,
+        match="max_weight must be a finite positive value",
+    ):
+        advantage_weights(
+            q_values=q_values,
+            v_values=v_values,
+            beta=3.0,
+            max_weight=invalid_max_weight,
+        )
 
 def test_weighted_behavior_cloning_loss_is_positive():
     logits = torch.tensor([

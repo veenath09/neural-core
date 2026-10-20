@@ -43,15 +43,15 @@ def advantage_weights(
             "q_values and v_values must have the same shape"
         )
 
-    if beta <= 0.0:
+    if not math.isfinite(beta) or beta <= 0.0:
         raise ValueError(
-            "beta must be positive"
-        )
+            "beta must be a finite positive value"
+    )
 
-    if max_weight <= 0.0:
+    if not math.isfinite(max_weight) or max_weight <= 0.0:
         raise ValueError(
-            "max_weight must be positive"
-        )
+            "max_weight must be a finite positive value"
+    )
 
     advantages = q_values - v_values
 
