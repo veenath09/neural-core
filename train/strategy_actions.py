@@ -42,6 +42,23 @@ def encode_strategy_actions(
         ],
     }
 
+def encode_tool_branch_actions(
+    strategy: Strategy,
+    tool_catalog: list[str],
+) -> dict[str, int]:
+    encoded = encode_tool_actions(
+        strategy=strategy,
+        tool_catalog=tool_catalog,
+    )
+
+    return {
+        f"tool::{tool_name}": selected
+        for tool_name, selected in zip(
+            tool_catalog,
+            encoded,
+        )
+    }
+
 def encode_tool_actions(
     strategy: Strategy,
     tool_catalog: list[str],

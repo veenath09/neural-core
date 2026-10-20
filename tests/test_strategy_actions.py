@@ -7,6 +7,7 @@ from train.online_learner import OnlineLearner
 from train.strategy_actions import (
     encode_strategy_actions,
     encode_tool_actions,
+    encode_tool_branch_actions,
 )
 
 def test_encode_strategy_actions_uses_contract_values():
@@ -336,3 +337,117 @@ def test_encode_tool_actions_rejects_duplicate_catalog():
             strategy=strategy,
             tool_catalog=tool_catalog,
         )
+
+def test_encode_tool_branch_actions_creates_binary_branches():
+    strategy = Strategy(
+        step_id="step-1",
+        round=1,
+        model_id="model-a",
+        halt="stop",
+        tools=[
+            "search",
+            "retrieval",
+        ],
+    )
+
+    tool_catalog = [
+        "search",
+        "calculator",
+        "retrieval",
+    ]
+
+    actions = encode_tool_branch_actions(
+        strategy=strategy,
+        tool_catalog=tool_catalog,
+    )
+
+    assert actions == {
+        "tool::search": 1,
+        "tool::calculator": 0,
+        "tool::retrieval": 1,
+    }
+
+def test_tool_branch_actions_train_branching_heads():
+    torch.manual_seed(0)
+
+    strategy = Strategy(
+        step_id="step-1",
+        round=1,
+        model_id="model-a",
+        halt="stop",
+        tools=[
+            "search",
+            "retrieval",
+        ],
+    )
+
+    tool_catalog = [
+        "search",
+        "calculator",
+        "retrieval",
+    ]
+
+    actions = encode_tool_branch_actions(
+        strategy=strategy,
+        tool_catalog=tool_catalog,
+    )
+
+    heads = BranchingValueHeads(
+        d=128,
+        dimensions={
+            "tool::search": 2,
+            "tool::calculator": 2,
+            "tool::retrieval": 2,
+        },
+    )
+
+    learner = OnlineLearner()
+
+    optimizer = torch.optim.SGD(
+        heads.parameters(),
+        lr=0.01,
+    )
+
+    z_h = torch.randn(
+        1,
+        128,
+    )
+
+    action_tensors = {
+        name: torch.tensor(
+            [index],
+            dtype=torch.long,
+        )
+        for name, index in actions.items()
+    }
+
+    returns = torch.tensor([
+        0.8,
+    ])
+
+    before = (
+        heads.heads["tool::search"].weight
+        .detach()
+        .clone()
+    )
+
+    loss = learner.train_branching_step(
+        heads=heads,
+        optimizer=optimizer,
+        z_h=z_h,
+        actions=action_tensors,
+        returns=returns,
+    )
+
+    after = (
+        heads.heads["tool::search"].weight
+        .detach()
+        .clone()
+    )
+
+    assert isinstance(loss, float)
+
+    assert not torch.allclose(
+        before,
+        after,
+    )
