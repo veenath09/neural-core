@@ -255,3 +255,69 @@ def test_online_learner_checkpoint_round_trip(tmp_path):
     )
 
     assert new_optimizer.param_groups[0]["lr"] == 0.05
+
+
+
+def test_train_action_value_step_supports_choose_only_batch():
+    torch.manual_seed(0)
+
+    learner = OnlineLearner()
+
+    heads = ActionValueHeads(
+        d=128,
+        card_dim=6,
+    )
+
+    optimizer = torch.optim.SGD(
+        heads.parameters(),
+        lr=0.05,
+    )
+
+    states = torch.randn(2, 128)
+
+    actions = [
+        {
+            "phase": "choose",
+            "model": 0,
+            "halt": None,
+        },
+        {
+            "phase": "choose",
+            "model": 2,
+            "halt": None,
+        },
+    ]
+
+    returns = torch.tensor(
+        [0.8, 0.6],
+        dtype=torch.float32,
+    )
+
+    cards = torch.randn(3, 6)
+
+    choose_batch, halt_batch = learner.extract_action_batches(
+        states=states,
+        actions=actions,
+        returns=returns,
+    )
+
+    model_before = (
+        heads.model_match.weight
+        .detach()
+        .clone()
+    )
+
+    loss = learner.train_action_value_step(
+        heads=heads,
+        optimizer=optimizer,
+        cards=cards,
+        choose_batch=choose_batch,
+        halt_batch=halt_batch,
+    )
+
+    assert isinstance(loss, float)
+
+    assert not torch.equal(
+        model_before,
+        heads.model_match.weight.detach(),
+    )

@@ -398,20 +398,20 @@ class OnlineLearner:
 
             losses.append(halt_loss)
 
-            if not losses:
-                raise ValueError("no CHOOSE or HALT decisions to train")
+        if not losses:
+            raise ValueError("no CHOOSE or HALT decisions to train")
 
-            loss = torch.stack(losses).mean()
+        loss = torch.stack(losses).mean()
 
-            if anchor_lambda > 0.0:
-                loss = loss + (
-                        anchor_lambda * self.anchor_penalty(heads)
-                        )
+        if anchor_lambda > 0.0:
+            loss = loss + (
+                    anchor_lambda * self.anchor_penalty(heads)
+                    )
 
-            loss.backward()
-            optimizer.step()
+        loss.backward()
+        optimizer.step()
 
-            return float(loss.detach())
+        return float(loss.detach())
 
     def train_from_rollout(
         self,
