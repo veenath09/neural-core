@@ -288,4 +288,61 @@ def test_consolidation_resets_anchor_after_training():
         atol=1e-8,
     )
 
+
+def test_checkpoint_restores_anchor_state(tmp_path):
+    torch.manual_seed(0)
+
+    learner = OnlineLearner()
+
+    heads = ActionValueHeads(
+        d=128,
+        card_dim=6,
+    )
+
+    optimizer = torch.optim.SGD(
+        heads.parameters(),
+        lr=0.01,
+    )
+
+    # Save the stable parameters as the anchor.
+    learner.set_anchor(heads)
+
+    # Simulate later learning that moves the current weights.
+    with torch.no_grad():
+        heads.halt.weight.add_(0.1)
+
+    checkpoint_path = tmp_path / "learner_checkpoint.pt"
+
+    learner.save_checkpoint(
+        checkpoint_path,
+        heads,
+        optimizer,
+    )
+
+    restored_learner = OnlineLearner()
+
+    restored_heads = ActionValueHeads(
+        d=128,
+        card_dim=6,
+    )
+
+    restored_optimizer = torch.optim.SGD(
+        restored_heads.parameters(),
+        lr=0.01,
+    )
+
+    restored_learner.load_checkpoint(
+        checkpoint_path,
+        restored_heads,
+        restored_optimizer,
+    )
+
+    assert restored_learner.anchor_state is not None
+
+    penalty = restored_learner.anchor_penalty(
+        restored_heads
+    )
+
+    assert penalty.item() > 0.0
+
     

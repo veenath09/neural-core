@@ -166,7 +166,7 @@ class OnlineLearner:
             actions=actions,
             returns=aligned_returns,
     )
-
+    
     def train_factored_strategy_step(
         self,
         heads,
@@ -722,10 +722,18 @@ class OnlineLearner:
     ) -> None:
         checkpoint = {
             "heads_state_dict": heads.state_dict(),
-            "optimizer_state_dict": optimizer.state_dict(),
+             "optimizer_state_dict": optimizer.state_dict(),
             "episode_count": self.episode_count,
             "gamma": self.gamma,
-        }
+            "anchor_state": (
+               None
+               if self.anchor_state is None
+               else {
+                  name: parameter.detach().cpu().clone()
+                  for name, parameter in self.anchor_state.items()
+              }
+        ),
+}
 
         torch.save(checkpoint, path)
 
@@ -751,6 +759,18 @@ class OnlineLearner:
 
         self.episode_count = checkpoint["episode_count"]
         self.gamma = checkpoint["gamma"]
+        anchor_state = checkpoint.get("anchor_state")
+
+        self.anchor_state = (
+            None
+            if anchor_state is None
+            else {
+                name: parameter.detach().clone()
+                for name, parameter in anchor_state.items()
+        }
+    )
+
+        
     def update(
         self,
         reward: float,
