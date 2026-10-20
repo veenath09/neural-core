@@ -3,6 +3,7 @@ import torch
 import pytest
 
 
+
 def test_replay_buffer_stores_training_episode():
     buffer = ReplayBuffer(capacity=3)
 
@@ -342,4 +343,32 @@ def test_replay_buffer_sample_negative_size_raises():
         match="sample size must be non-negative",
     ):
         buffer.sample(size=-1)
-    
+
+
+@pytest.mark.parametrize(
+    "capacity",
+    [0, -1],
+)
+def test_replay_buffer_rejects_invalid_capacity(capacity):
+    with pytest.raises(
+        ValueError,
+        match="capacity must be greater than 0",
+    ):
+        ReplayBuffer(capacity=capacity)
+
+
+@pytest.mark.parametrize(
+    "per_domain_capacity",
+    [0, -1],
+)
+def test_replay_buffer_rejects_invalid_per_domain_capacity(
+    per_domain_capacity,
+):
+    with pytest.raises(
+        ValueError,
+        match="per_domain_capacity must be greater than 0",
+    ):
+        ReplayBuffer(
+            capacity=10,
+            per_domain_capacity=per_domain_capacity,
+        )

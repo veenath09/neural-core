@@ -7,6 +7,20 @@ class ReplayBuffer:
         capacity=1000,
         per_domain_capacity=None,
     ):
+        
+        if capacity <= 0:
+             raise ValueError(
+                "capacity must be greater than 0"
+        )
+
+        if (
+            per_domain_capacity is not None
+            and per_domain_capacity <= 0
+        ):
+            raise ValueError(
+                "per_domain_capacity must be greater than 0"
+        )
+
         self.capacity = capacity
         self.per_domain_capacity = per_domain_capacity
         self.buffer = []
