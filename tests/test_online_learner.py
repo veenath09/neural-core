@@ -37,6 +37,24 @@ def test_monte_carlo_returns_are_discounted():
     assert returns == pytest.approx([0.81, 0.9, 1.0])
 
 
+@pytest.mark.parametrize(
+    "gamma",
+    [
+        -0.1,
+        1.1,
+        float("nan"),
+        float("inf"),
+        float("-inf"),
+    ],
+)
+def test_online_learner_rejects_invalid_gamma(gamma):
+    with pytest.raises(
+        ValueError,
+        match="gamma must be a finite value between 0 and 1",
+    ):
+        OnlineLearner(gamma=gamma)
+
+
 def test_monte_carlo_returns_reject_zero_decisions():
     learner = OnlineLearner()
 

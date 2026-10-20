@@ -1,5 +1,6 @@
 from numpy.ma import choose
 import torch
+import math
 import torch.nn.functional as F
 from train.strategy_actions import (
     encode_strategy_actions,
@@ -9,10 +10,15 @@ from train.strategy_actions import (
 
 class OnlineLearner:
     def __init__(self, gamma: float = 1.0):
+        if not math.isfinite(gamma) or not 0.0 <= gamma <= 1.0:
+            raise ValueError(
+            "gamma must be a finite value between 0 and 1"
+        )
+
         self.episode_count = 0
         self.gamma = gamma
         self.anchor_state = None
-
+        
     def monte_carlo_returns(
         self,
         reward: float,
