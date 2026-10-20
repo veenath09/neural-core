@@ -1,5 +1,5 @@
 from __future__ import annotations
-
+import math
 import torch
 import torch.nn.functional as F
 from torch import nn
@@ -55,14 +55,14 @@ def advantage_weights(
 
     advantages = q_values - v_values
 
-    weights = torch.exp(
-        beta * advantages
+    max_log_weight = math.log(max_weight)
+
+    scaled_advantages = torch.clamp(
+        beta * advantages,
+        max=max_log_weight,
     )
 
-    return torch.clamp(
-        weights,
-        max=max_weight,
-    )
+    return torch.exp(scaled_advantages)
 
 def weighted_behavior_cloning_loss(
     logits: torch.Tensor,

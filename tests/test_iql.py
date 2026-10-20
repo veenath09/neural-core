@@ -76,6 +76,31 @@ def test_advantage_weights_favour_better_actions():
     # 0.4 - 0.5 = -0.1
     assert weights[0].item() > weights[1].item()
 
+
+def test_advantage_weights_keep_gradients_finite_for_large_advantages():
+    q_values = torch.tensor(
+        [1000.0],
+        requires_grad=True,
+    )
+
+    v_values = torch.tensor(
+        [0.0],
+        requires_grad=True,
+    )
+
+    weights = advantage_weights(
+        q_values=q_values,
+        v_values=v_values,
+        beta=3.0,
+        max_weight=100.0,
+    )
+
+    weights.sum().backward()
+
+    assert torch.isfinite(weights).all()
+    assert torch.isfinite(q_values.grad).all()
+    assert torch.isfinite(v_values.grad).all()
+
 def test_weighted_behavior_cloning_loss_is_positive():
     logits = torch.tensor([
         [2.0, 0.5, 0.1],
