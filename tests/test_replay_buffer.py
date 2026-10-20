@@ -1,4 +1,6 @@
 from train.replay_buffer import ReplayBuffer
+import torch
+import pytest
 
 
 def test_replay_buffer_stores_training_episode():
@@ -266,4 +268,78 @@ def test_replay_buffer_samples_across_domains():
         "domain_b",
         "domain_c",
     }
+
+def test_age_banded_sampling_supports_tensor_records():
+    buffer = ReplayBuffer(capacity=10)
+
+    episode_1 = {
+        "states": torch.tensor([
+            [1.0, 2.0],
+            [3.0, 4.0],
+        ]),
+        "actions": [
+            {"phase": "choose", "model": 0, "halt": None},
+            {"phase": "halt", "model": None, "halt": "stop"},
+        ],
+        "returns": torch.tensor([0.8, 0.8]),
+        "domain": "domain_a",
+        "age": 0,
+    }
+
+    episode_2 = {
+        "states": torch.tensor([
+            [5.0, 6.0],
+            [7.0, 8.0],
+        ]),
+        "actions": [
+            {"phase": "choose", "model": 1, "halt": None},
+            {"phase": "halt", "model": None, "halt": "stop"},
+        ],
+        "returns": torch.tensor([0.6, 0.6]),
+        "domain": "domain_a",
+        "age": 1,
+    }
+
+    buffer.add(episode_1)
+    buffer.add(episode_2)
+
+    sampled = buffer.sample_age_banded(size=2)
+
+    assert len(sampled) == 2
+
+
+def test_replay_buffer_sample_zero_returns_empty_list():
+    buffer = ReplayBuffer(capacity=3)
+
+    buffer.add({
+        "id": "episode-1",
+        "domain": "domain_a",
+        "age": 0,
+    })
+
+    buffer.add({
+        "id": "episode-2",
+        "domain": "domain_b",
+        "age": 0,
+    })
+
+    sampled = buffer.sample(size=0)
+
+    assert sampled == []
+
+
+def test_replay_buffer_sample_negative_size_raises():
+    buffer = ReplayBuffer(capacity=3)
+
+    buffer.add({
+        "id": "episode-1",
+        "domain": "domain_a",
+        "age": 0,
+    })
+
+    with pytest.raises(
+        ValueError,
+        match="sample size must be non-negative",
+    ):
+        buffer.sample(size=-1)
     

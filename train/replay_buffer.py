@@ -72,12 +72,16 @@ class ReplayBuffer:
         # If more samples are requested, fill from remaining episodes.
         if len(sampled) < size:
             for episode in reversed(self.buffer):
-                if episode not in sampled:
+                already_sampled = any(
+                    episode is selected_episode
+                    for selected_episode in sampled
+                )
+
+                if not already_sampled:
                     sampled.append(episode)
 
                 if len(sampled) >= size:
                     break
-
         return sampled
 
     
@@ -141,4 +145,10 @@ class ReplayBuffer:
     
 
     def sample(self, size=10):
-        return self.buffer[-size:]  
+        if size < 0:
+            raise ValueError("sample size must be non-negative")
+
+        if size == 0:
+            return []
+
+        return self.buffer[-size:]
