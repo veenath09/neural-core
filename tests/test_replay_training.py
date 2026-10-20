@@ -1,4 +1,5 @@
 import torch
+import pytest
 
 from train.online_learner import OnlineLearner
 from train.replay_buffer import ReplayBuffer
@@ -127,3 +128,54 @@ def test_online_learner_trains_from_replay_buffer():
         halt_before,
         heads.halt.weight.detach(),
     )
+
+def test_failed_replay_storage_does_not_age_existing_episodes():
+    torch.manual_seed(0)
+
+    world, episodes = world_and_episodes(2)
+
+    controller = tiny_model("full").eval()
+
+    with torch.no_grad():
+        rollout_output = rollout(
+            controller,
+            episodes,
+            world,
+        )
+
+    learner = OnlineLearner()
+
+    replay_buffer = ReplayBuffer(
+        capacity=10,
+        per_domain_capacity=5,
+    )
+
+    replay_buffer.add({
+        "states": torch.randn(2, 128),
+        "actions": [
+            {"phase": "choose", "model": 0, "halt": None},
+            {"phase": "halt", "model": None, "halt": "stop"},
+        ],
+        "returns": torch.tensor([0.5, 0.5]),
+        "domain": "old_domain",
+        "age": 4,
+    })
+
+    # Make the first rollout episode invalid:
+    # decision states and actions no longer have matching lengths.
+    rollout_output.decision_actions[0] = []
+
+    rewards = [0.8] * len(rollout_output.results)
+
+    with pytest.raises(
+        ValueError,
+        match="decision states and actions must have the same length",
+    ):
+        learner.store_rollout_in_replay(
+            rollout_output=rollout_output,
+            rewards=rewards,
+            replay_buffer=replay_buffer,
+        )
+
+    # Failed storage must not mutate existing replay data.
+    assert replay_buffer.buffer[0]["age"] == 4

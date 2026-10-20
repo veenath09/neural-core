@@ -521,10 +521,10 @@ class OnlineLearner:
                 "rollout states, actions and results must align"
             )
 
-        # Existing replay episodes become one generation older.
-        replay_buffer.increment_ages()
+        
 
-        stored_count = 0
+        # Validate and prepare every episode before mutating replay.
+        prepared_episodes = []
 
         for index, reward in enumerate(rewards):
             decision_states = rollout_output.decision_states[index]
@@ -533,25 +533,29 @@ class OnlineLearner:
             if len(decision_states) != len(decision_actions):
                 raise ValueError(
                     "decision states and actions must have the same length"
-                )
+        )
 
             states, returns = self.prepare_episode(
                 decision_states=decision_states,
+            
                 reward=reward,
             )
 
-            replay_episode = {
+            prepared_episodes.append({
                 "states": states.detach().cpu(),
                 "actions": list(decision_actions),
                 "returns": returns.detach().cpu(),
                 "domain": rollout_output.results[index].ep_type,
                 "age": 0,
-            }
+            })
 
+        # Only mutate replay after all validation/preparation succeeds.
+        replay_buffer.increment_ages()
+
+        for replay_episode in prepared_episodes:
             replay_buffer.add(replay_episode)
-            stored_count += 1
 
-        return stored_count
+        return len(prepared_episodes)
 
     def train_from_replay(
         self,
