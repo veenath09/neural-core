@@ -205,10 +205,12 @@ The prototype was built ahead of the planned package split. Where code lives tod
 | C3-08 baselines | `eval/policies.py`, `eval/baselines.py` |
 | C2-02, C2-03 (`learning/`) | `train/rollout.py`, `train/train.py` |
 | C4 `execution/` | `execution/` (from PR #1) |
+| C2 RL / online (`learning/`) | `train/rl.py`, `train/policy_init.py`, `train/online.py`, `train/pool_state.py` |
+| C3 online / drift experiments, live pilot | `eval/online_sim.py`, `measurement/online_env.py`, `scripts/online_live.py` |
 
-Built: contracts v1 (reduced subset), stub controller, features, encoder, MLP and attention cores, memory with three gates, heads, rollout engine, supervised training with EMA, residual and memory diagnostics, simple baselines.
+Built (2026-10-22, branch `rl-online`): everything above, plus the reasoning-depth dataset and pool (19 model x thinking options, synthetic training questions), the tau sweep with the cost-capped rule, simulator RL (calibrated start, learnable sharpness, reward guard; v5), the online learner (session, replay, importance-weighted updates, canary rollback, models joining/retiring, drift experiments), an opt-in simulator with hidden episode difficulty, the live pilot script (dry-run tested), MLflow + Grafana monitoring, the frozen analysis plan (tag `analysis-freeze`).
 
-Missing: `common/` contracts and protocols per `assets/`; the `Controller.decide()`/`observe()`/`reset()` API; `CompositeScorer`/`Score`; the RL stage; contract-version stamping in checkpoints; `stats.py` with bootstrap CIs; calibration and the tau sweep; `RunLogger` metric names; the dashboard; `docs/experiment_log.md` and the `analysis-freeze` tag.
+Missing: `common/` contracts and protocols per `assets/`; contract-version stamping in checkpoints; the 3-seed test results (seeds 1-2 running); the live pilot run (needs approval and a cap); merge of `rl-online` into `main`. Current status and the ordered to-do list: `docs/PROGRESS.md`.
 
 Seed-0 pilot, validation set, supervised stage. **Single seed, indicative only.**
 

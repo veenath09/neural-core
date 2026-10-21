@@ -27,7 +27,7 @@ import pandas as pd
 
 from eval.policies import AlwaysCheapest, RandomPolicy
 from eval.policies import evaluate as evaluate_policies
-from train.train import evaluate, load_data, load_model, reference_points
+from train.train import evaluate, load_model, load_run_data, reference_points
 
 TAUS = (0.5, 0.6, 0.7, 0.8, 0.85, 0.9, 0.95, 0.98, 0.99)
 HALT_TAUS = (0.1, 0.2, 0.3, 0.5, 0.7)
@@ -46,7 +46,8 @@ def choose(curve: pd.DataFrame, cost_cap: float = float("inf"), tol: float = QUA
 
 
 def baselines(data) -> dict:
-    df = evaluate_policies(data.val, data.world.table, data.world.model_ids, [AlwaysCheapest(), RandomPolicy(0)])
+    df = evaluate_policies(data.val, data.world.table, data.world.model_ids, [AlwaysCheapest(), RandomPolicy(0)],
+                           hard_p=data.world.hard_p)
     g = df.groupby("policy")[["quality", "cost_usd"]].mean()
     return {"always_cheapest_quality": float(g.loc["always_cheapest", "quality"]),
             "random_quality": float(g.loc["random", "quality"]), "random_cost_usd": float(g.loc["random", "cost_usd"])}
@@ -62,7 +63,7 @@ def write_choice(run_dir: Path, curve: pd.DataFrame, ref: dict, base: dict) -> d
 
 def sweep(run_dir: Path, taus=TAUS, halt_taus=HALT_TAUS) -> pd.DataFrame:
     summary = json.loads((run_dir / "metrics.json").read_text())
-    data = load_data(Path(summary["data_dir"]))
+    data = load_run_data(summary)
     model = load_model(run_dir, data)
     ref = reference_points(data.val, data.world, data.data_dir)
     base = baselines(data)
@@ -84,7 +85,7 @@ def sweep(run_dir: Path, taus=TAUS, halt_taus=HALT_TAUS) -> pd.DataFrame:
 
 def reselect(run_dir: Path) -> dict:
     """Apply the current rule to a saved curve (the curve itself does not depend on the rule)."""
-    data = load_data(Path(json.loads((run_dir / "metrics.json").read_text())["data_dir"]))
+    data = load_run_data(json.loads((run_dir / "metrics.json").read_text()))
     return write_choice(run_dir, pd.read_csv(run_dir / "tau_sweep.csv"),
                         reference_points(data.val, data.world, data.data_dir), baselines(data))
 

@@ -1,0 +1,148 @@
+"""Tests for Part 2 Task 7: simulated online experiments (eval/online_sim.py)."""
+
+import numpy as np
+import pytest
+
+from eval.online_sim import cards_from_data, shifted_skeletons, stream, subset_data
+from tests.test_train import tiny_data
+from train.online import OnlineConfig
+from train.train import train
+
+
+def _trained(tmp_path, data):
+    train("full", seed=0, epochs=1, batch_size=32, data=data, out_dir=tmp_path, log=lambda row: None)
+    return tmp_path / "full-s0"
+
+
+def test_stream_is_prequential(tmp_path):
+    data = tiny_data()
+    init = _trained(tmp_path, data)
+    cfg = OnlineConfig(update_every=4, replay_size=4, lr=1e-3)
+    df = stream(init, data.train[:20], data, cfg, learn=True, lam_idx_fn=lambda i: i % 5, out_dir=tmp_path / "s")
+    assert len(df) == 20 and df["episode"].tolist() == list(range(20))
+    # each episode ran with the version published before it was observed: one update per 4 sample episodes
+    expected = [i // 4 for i in range(20)]
+    assert df["policy_version"].tolist() == expected
+    assert {"ep_type", "lam", "mode", "quality", "cost_usd", "reward", "new_model_share", "rollback"} <= set(df)
+
+
+def test_frozen_stream_never_updates(tmp_path):
+    data = tiny_data()
+    init = _trained(tmp_path, data)
+    df = stream(init, data.train[:12], data, OnlineConfig(update_every=4), learn=False, lam_idx_fn=lambda i: 0,
+                out_dir=tmp_path / "s")
+    assert (df["policy_version"] == 0).all() and not df["rollback"].any()
+
+
+def test_new_models_get_explored(tmp_path):
+    data = tiny_data()
+    ids = list(data.world.model_ids)
+    cards = {c.model_id: c for c in cards_from_data(data)}
+    start = subset_data(data, ids[:2])  # trained without models 2 and 3
+    init = _trained(tmp_path, start)
+    df = stream(init, data.train[:100], data, OnlineConfig(update_every=8, replay_size=8, lr=1e-3), learn=True,
+                lam_idx_fn=lambda i: i % 5, add_model_at={0: [cards[ids[2]], cards[ids[3]]]}, out_dir=tmp_path / "s",
+                per_model_share=True)
+    assert df[f"share_{ids[2]}"].sum() > 0 and df[f"share_{ids[3]}"].sum() > 0
+    assert df["new_model_share"].iloc[:100].mean() > 0
+
+
+def test_shifted_skeletons_change_the_task_mix():
+    data = tiny_data()
+    table = data.world.table
+    sks = shifted_skeletons(table, list(table.prompt_ids), n=200, seed=0, shares={0: 0.9, 1: 0.1}, by="step_type")
+    types = np.array([table.step_type[table.index[p]] for sk in sks for p in sk.prompt_ids])
+    assert (types == 0).mean() > 0.75  # the tiny table is 50/50; the shift pushes it to ~90/10
+
+
+def test_probe_card_keeps_depth_features():
+    import torch
+
+    from controller.contracts import ModelCard
+    from eval.online_sim import probe_card
+
+    data = tiny_data()
+    data.cards = torch.cat([data.cards, torch.tensor([[1.0, 0.25]] * 4)], dim=1)  # 8-feature depth-style cards
+    cards = cards_from_data(data)
+    ids = list(data.world.model_ids)
+    c = probe_card(ids[3], data, [x for x in cards if x.model_id != ids[3]], n_probe=20)
+    assert isinstance(c, ModelCard) and len(c.capability) == 8 and c.capability[6:] == [1.0, 0.25]
+    assert all(0 <= a <= 1 for a in c.capability[:5])
+
+
+def test_paired_eval_is_zero_for_unchanged_weights(tmp_path, monkeypatch):
+    import shutil
+
+    from eval.online_sim import paired_eval
+
+    data = tiny_data()
+    init = _trained(tmp_path, data)
+    stream(init, data.train[:8], data, OnlineConfig(update_every=100), learn=True, lam_idx_fn=lambda i: 0,
+           out_dir=tmp_path / "s")
+    shutil.copy(init / "model.pt", tmp_path / "s" / "v0.pt")  # "final" weights = the start: no learning
+    monkeypatch.setattr("eval.online_sim._init", lambda d: (d, data, {}))  # tiny data lives in memory
+    out = paired_eval(init, tmp_path / "s", data.val[:16])
+    assert all(v["diff"] == 0 for v in out["per_lambda"].values()) and not out["learned_worse_somewhere"]
+
+
+def test_new_model_experiment_passes_a_canary(monkeypatch, tmp_path):
+    import eval.online_sim as sim
+
+    seen = {}
+
+    def fake_run_pair(init_dir, sks, data, cfg, out, seed, **kw):
+        seen.update(kw)
+        raise RuntimeError("stop after wiring check")
+
+    data = tiny_data()
+    monkeypatch.setattr(sim, "_init", lambda d: (d, data, {}))
+    monkeypatch.setattr(sim, "_test_skeletons", lambda d: data.train[:4])
+    monkeypatch.setattr(sim, "_run_pair", fake_run_pair)
+    with pytest.raises(RuntimeError):
+        sim.experiment_new_models(tmp_path, [list(data.world.model_ids)[3]], tmp_path, cfg=OnlineConfig(canary_episodes=7))
+    assert len(seen["canary_skeletons"]) == min(7, len(data.val))
+
+
+def test_static_arm_never_changes_cards_or_weights(tmp_path):
+    import json
+
+    data = tiny_data()
+    init = _trained(tmp_path, data)
+    df = stream(init, data.train[:12], data, OnlineConfig(update_every=4), learn=False, update_cards=False,
+                lam_idx_fn=lambda i: 0, out_dir=tmp_path / "static")
+    pool = json.loads((tmp_path / "static" / "pool.json").read_text())
+    assert pool["cards"] == pool["prior"] and (df["policy_version"] == 0).all()
+
+
+def test_drift_changes_the_world_only_from_its_episode():
+    from eval.online_sim import price_shock, quality_drop
+
+    data = tiny_data()
+    w = data.world
+    shocked = price_shock(w.model_ids[1], 10.0)(w)
+    assert np.allclose(shocked.table.cost[:, 1], w.table.cost[:, 1] * 10)
+    assert np.allclose(shocked.table.cost[:, 0], w.table.cost[:, 0]) and np.array_equal(shocked.card_costs, w.card_costs)
+    worse = quality_drop(w.model_ids[2], 0.5, seed=1)(w)
+    assert worse.table.correct[:, 2].sum() < w.table.correct[:, 2].sum()
+    assert not (worse.table.correct[:, 2] & ~w.table.correct[:, 2]).any()  # never newly right
+
+
+def test_with_better_model_is_a_cheap_twin():
+    from eval.online_sim import with_better_model
+
+    data = tiny_data()
+    ids = list(data.world.model_ids)
+    d2 = with_better_model(data, ids[3], ids[0], "twin")
+    t = d2.world.table
+    assert d2.world.model_ids[-1] == "twin" and t.n_models == 5
+    assert np.array_equal(t.correct[:, 4], t.correct[:, 3]) and np.allclose(t.cost[:, 4], t.cost[:, 0])
+    assert d2.cards.shape[0] == 5
+
+
+def test_compare_arms_paired_differences():
+    from eval.online_sim import compare_arms
+
+    r = {"static": {0: np.array([0.5, 0.5, 0.5])}, "learn": {0: np.array([0.6, 0.7, 0.5])}}
+    out = compare_arms(r)
+    assert out["learn"]["0.1"]["diff_vs_static"] == pytest.approx(0.1)
+    assert out["static"]["0.1"]["diff_vs_static"] == 0.0
