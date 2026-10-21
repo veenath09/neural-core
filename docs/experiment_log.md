@@ -75,3 +75,55 @@ full uses its context, but context_free can reach the same quality from the curr
 Changes made: none.
 Next: propose stronger dependencies to C3 (a retried question needs a different model than the one that failed; a failure
 affects every later step; budget carried across steps matters), as a contract change agreed by the team, before seeds 1-2.
+
+## 2026-10-21/22 simulator RL pilots v1-v5, seed 0 (RouterBench pool, val)
+Runs: runs/routerbench/{full,context_free}-s0/{rl, rl_v3, rl_v4, rl_v5}; diagnostics in this session's notes.
+Commits: rl-online 628abcc (v1) ... 1b77e8b (v3) ... e532371 (v4) ... 20d4e56 (v5 calibration)
+Observed:
+- v1 (default start, quality guard): RL never beat the supervised tau rule (0.735 vs 0.744 at matched cost); the guard
+  rolled back every lambda-sensitive policy.
+- Root cause 1: the default D13 start sits at the expensive corner (always-strongest, no escalation). A two-number search
+  on the untrained policy beat both supervised and 1,000 RL updates at every lambda (lambda 1: 0.534 vs 0.057 reward).
+- Root cause 2: the quality guard rejected high-lambda policies (fixed: reward guard, v2).
+- v3 (calibrated start): beats supervised at matched cost (0.753 vs 0.745 full; 0.768 vs 0.749 context_free), but every
+  RL check rolled back: updates made lambda 0.3-1.0 worse. Lower lr and no anchor did not help.
+- Root cause 3: the sampling policy was near-uniform (lambda 1: sample 0.33 vs serve 0.54 reward). v4 adds a learnable
+  sharpness k (serve decisions unchanged): no rollbacks, reward up at every lambda (lambda 2: -0.058 -> 0.470).
+- v5 (guard reference from the supervised start, zero-tolerance refit, sharpness grid to 50): context_free 0.772 vs
+  supervised 0.749 at <= $0.004, best checkpoint update 750, 0 rollbacks, lambda 2 reward 0.455. full/kimi/luna finishing.
+Changes made: calibrated start, sharpness, reward guard, guard reference before calibration (D13 deviations).
+Next: v5 frontier for all four runs; online experiments from v5.
+
+## 2026-10-22 online RL experiments, seed 0 (rounds v1-v5; paired held-out evaluation from v3)
+Runs: results/online_sim{,_v2,_v3,_v4,_v5}; scripts eval/online_sim.py; final checkpoints only (intermediate v*.pt removed,
+15.9 GB, after the disk filled; learner now keeps 3).
+Observed, round by round (each round fixed a real bug the previous one exposed):
+- v1 shift: 30 rollbacks even at lr 1e-5 -> cards drifted toward 0.5 (verifier noise not de-biased) and the canary compared
+  with a reference taken once at the start. Fixed: de-biased cards, teacher-relative canary.
+- v2 shift: learn vs frozen differences of +-0.03 were sampling noise (~+-0.04 CI per lambda cell). Fixed: paired greedy
+  evaluation of final weights on 2,000 held-out shifted episodes.
+- v2/v3 paired: online learning drifted to cheaper choices at every lambda (lambda 0.1: $0.0019 vs $0.0038, quality 0.760
+  vs 0.783). Cause: the 15%-flip verifier shrinks quality differences by 30% while costs are exact (learner optimises
+  lambda/0.7). Fixed: rewards de-biased with the known flip rate.
+- v3 depth new-model runs: mean rewards above 1 (impossible). Cause: reward hacking - escalation is triggered by the
+  verifier and re-rolls it, so the decision verdict reads high; the learner escalated to re-roll the checker (Kimi: 3.2x
+  cost, lower true quality). Fixed: rewards from an independent audit verdict of the final answer.
+- Review fix wave (two sessions): per-pool cost_ref everywhere (depth results before it are invalid), escalation by card
+  cost (joiners are appended), bonus in pre-sharpness units, start_online wiring, canary on reward.
+- v4 paired (after audit fix; depth runs invalid, wrong cost_ref): shift and new models mostly small losses (-0.002 to
+  -0.09 at some lambdas), new-model shares near 0 (Kimi and Luna are not better than existing options, so ignoring them
+  is correct).
+- v5 paired, context_free shift (2 of 8 done): lr 1e-5: +0.022* at lambda 0.6, -0.063* at 0.1, others ns; lr 1e-3: 6
+  rollbacks, mixed. Full/new-model v5 still running.
+Surprises: every online round until v5 was dominated by a measurement/reward bug, not by learning.
+Changes made: see D13 deviations (docs/IMPLEMENTATION_PLAN_neural_core.md).
+Next: drift experiments with a static arm (results/online_drift) to separate card adaptation from weight learning.
+
+## 2026-10-22 context claim on a simulator with hidden episode difficulty, seed 0 (val)
+Runs: runs/routerbench_hard/{full,context_free}-s0 (hard_p 0.3: a hard episode fails the cheaper half of the models on
+every step; only earlier results reveal it). Commit aad7259.
+Observed: full val loss 0.627 vs context_free 0.654; at the selected thresholds full 0.665 quality ($0.0042) vs
+context_free 0.616 ($0.0038); best quality at <= $0.006: 0.752 vs 0.744. Oracle 0.915, random 0.492.
+Interpretation: first sign that workflow context helps when history is informative. Not a result yet: H2 is decided by
+the paired test contrast over 3 seeds (docs/analysis_plan.md).
+Next: seeds 1-2 (running), then eval.final_test.
