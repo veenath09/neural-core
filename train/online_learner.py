@@ -1,12 +1,23 @@
 from numpy.ma import choose
 import torch
+import math
 import torch.nn.functional as F
+from train.strategy_actions import (
+    encode_strategy_actions,
+    encode_factored_strategy_actions,
+)
 
 
 class OnlineLearner:
     def __init__(self, gamma: float = 1.0):
+        if not math.isfinite(gamma) or not 0.0 <= gamma <= 1.0:
+            raise ValueError(
+            "gamma must be a finite value between 0 and 1"
+        )
+
         self.episode_count = 0
         self.gamma = gamma
+        self.anchor_state = None
 
     def monte_carlo_returns(
         self,
@@ -43,9 +54,48 @@ class OnlineLearner:
             if name not in actions:
                 raise ValueError(f"missing action for branch {name!r}")
 
+            if branch_values.ndim != 2:
+                    raise ValueError(
+                        "branch values must be a 2D tensor"
+            )
+
+            if (
+                branch_values.shape[0] != len(returns)
+                or len(actions[name]) != len(returns)
+            ):
+                raise ValueError(
+                    "branch batch sizes must match returns"
+                )
+
+            branch_actions = actions[name]
+
+            if branch_actions.ndim != 1:
+                    raise ValueError(
+                        "branch actions must be a 1D tensor"
+                )
+
+            if branch_actions.dtype not in (
+                torch.int32,
+                torch.int64,
+            ):
+                raise ValueError(
+                        "branch actions must use an integer dtype"
+                )
+
+            if (
+                torch.any(branch_actions < 0)
+                or torch.any(branch_actions >= branch_values.shape[1])
+                ):
+                raise ValueError(
+                    "branch action indices must be within range"
+                )
+
+
+
+            
             chosen = branch_values.gather(
                 1,
-                actions[name].unsqueeze(1),
+                branch_actions.unsqueeze(1),
             ).squeeze(1)
 
             losses.append(
@@ -79,6 +129,134 @@ class OnlineLearner:
         optimizer.step()
 
         return float(loss.detach().item())
+
+    def train_strategy_step(
+        self,
+        heads,
+        optimizer,
+        z_h: torch.Tensor,
+        strategy,
+        returns: torch.Tensor,
+    ) -> float:
+        if len(z_h) != 1 or len(returns) != 1:
+            raise ValueError(
+                "train_strategy_step expects exactly one strategy decision"
+        )
+
+        encoded_actions = encode_strategy_actions(
+            strategy
+        )
+
+        actions = {
+            name: torch.tensor(
+                [index],
+                dtype=torch.long,
+                device=z_h.device,
+            )
+            for name, index in encoded_actions.items()
+    }
+
+        aligned_returns = returns.to(
+            device=z_h.device,
+            dtype=z_h.dtype,
+        )
+
+        return self.train_branching_step(
+            heads=heads,
+            optimizer=optimizer,
+            z_h=z_h,
+            actions=actions,
+            returns=aligned_returns,
+        )
+
+    def train_strategy_batch(
+        self,
+        heads,
+        optimizer,
+        z_h: torch.Tensor,
+        strategies: list,
+        returns: torch.Tensor,
+    ) -> float:
+        if len(z_h) != len(strategies) or len(z_h) != len(returns):
+            raise ValueError(
+                "z_h, strategies and returns must have the same length"
+        )
+
+        if len(z_h) == 0:
+            raise ValueError(
+                "train_strategy_batch expects at least one strategy decision"
+        )
+
+        encoded = [
+            encode_strategy_actions(strategy)
+            for strategy in strategies
+        ]
+
+        actions = {
+            name: torch.tensor(
+                [
+                    strategy_actions[name]
+                    for strategy_actions in encoded
+            ],
+            dtype=torch.long,
+            device=z_h.device,
+        )
+            for name in encoded[0]
+    }
+
+        aligned_returns = returns.to(
+            device=z_h.device,
+            dtype=z_h.dtype,
+    )
+
+        return self.train_branching_step(
+            heads=heads,
+            optimizer=optimizer,
+            z_h=z_h,
+            actions=actions,
+            returns=aligned_returns,
+    )
+    
+    def train_factored_strategy_step(
+        self,
+        heads,
+        optimizer,
+        z_h: torch.Tensor,
+        strategy,
+        tool_catalog: list[str],
+        returns: torch.Tensor,
+    ) -> float:
+        if len(z_h) != 1 or len(returns) != 1:
+            raise ValueError(
+                "train_factored_strategy_step expects exactly one strategy decision"
+            )
+
+        encoded_actions = encode_factored_strategy_actions(
+            strategy=strategy,
+            tool_catalog=tool_catalog,
+        )
+
+        actions = {
+            name: torch.tensor(
+                [index],
+                dtype=torch.long,
+                device=z_h.device,
+            )
+            for name, index in encoded_actions.items()
+        }
+
+        aligned_returns = returns.to(
+            device=z_h.device,
+            dtype=z_h.dtype,
+        )
+
+        return self.train_branching_step(
+            heads=heads,
+            optimizer=optimizer,
+            z_h=z_h,
+            actions=actions,
+            returns=aligned_returns,
+        )
 
     def prepare_episode(
         self,
@@ -211,7 +389,521 @@ class OnlineLearner:
             )
 
         return choose, halt
+
+    def extract_action_batches(
+        self,
+        states: torch.Tensor,
+        actions: list[dict],
+        returns: torch.Tensor,
+    ) -> tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]]:
+        if len(states) != len(actions) or len(states) != len(returns):
+            raise ValueError(
+            "states, actions and returns must have the same length"
+        )
+
+        choose, halt = self.split_actions(actions)
+
+        choose_indices = torch.tensor(
+            [index for index, _ in choose],
+            dtype=torch.long,
+            device=states.device,
+        )
+
+        choose_actions = torch.tensor(
+            [action for _, action in choose],
+            dtype=torch.long,
+            device=states.device,
+        )
+
+        halt_indices = torch.tensor(
+            [index for index, _ in halt],
+            dtype=torch.long,
+            device=states.device,
+        )
+
+        halt_actions = torch.tensor(
+            [action for _, action in halt],
+            dtype=torch.long,
+            device=states.device,
+        )
+
+        choose_batch = {
+            "states": states[choose_indices],
+            "actions": choose_actions,
+            "returns": returns[choose_indices],
+        }
+
+        halt_batch = {
+            "states": states[halt_indices],
+            "actions": halt_actions,
+            "returns": returns[halt_indices],
+        }
+
+        return choose_batch, halt_batch 
+
+    def train_action_value_step(
+        self,
+        heads,
+        optimizer,
+        cards: torch.Tensor,
+        choose_batch: dict[str, torch.Tensor],
+        halt_batch: dict[str, torch.Tensor],
+        anchor_lambda: float = 0.0,
+    ) -> float:
+        optimizer.zero_grad(set_to_none=True)
+
+        losses = []
+
+        # Train the real model-choice value head.
+        if len(choose_batch["actions"]) > 0:
+            choose_values = heads(
+                z_h=choose_batch["states"].detach(),
+                cards=cards,
+            )["model"]
+
+            selected_model_values = choose_values.gather(
+                1,
+                choose_batch["actions"].unsqueeze(1),
+            ).squeeze(1)
+
+            model_loss = F.mse_loss(
+                selected_model_values,
+                choose_batch["returns"],
+            )
+
+            losses.append(model_loss)
+
+        # Train the real halt value head.
+        if len(halt_batch["actions"]) > 0:
+            halt_values = heads(
+                z_h=halt_batch["states"].detach(),
+                cards=cards,
+            )["halt"]
+
+            selected_halt_values = halt_values.gather(
+                1,
+                halt_batch["actions"].unsqueeze(1),
+            ).squeeze(1)
+
+            halt_loss = F.mse_loss(
+                selected_halt_values,
+                halt_batch["returns"],
+            )
+
+            losses.append(halt_loss)
+
+        if not losses:
+            raise ValueError("no CHOOSE or HALT decisions to train")
+
+        loss = torch.stack(losses).mean()
+
+        if anchor_lambda > 0.0:
+            loss = loss + (
+                    anchor_lambda * self.anchor_penalty(heads)
+                    )
+
+        loss.backward()
+        optimizer.step()
+
+        return float(loss.detach())
+
+    def train_from_rollout(
+        self,
+        rollout_output,
+        rewards: list[float],
+        cards: torch.Tensor,
+        heads,
+        optimizer,
+        anchor_lambda: float = 0.0,
+    ) -> dict:
+        if len(rollout_output.results) != len(rewards):
+            raise ValueError(
+                "rollout results and rewards must have the same length"
+            )
+
+        states, actions, returns = self.prepare_rollout_batch(
+            decision_states=rollout_output.decision_states,
+            decision_actions=rollout_output.decision_actions,
+            rewards=rewards,
+        )
+
+        choose_batch, halt_batch = self.extract_action_batches(
+            states=states,
+            actions=actions,
+            returns=returns,
+        )
+
+        loss = self.train_action_value_step(
+            heads=heads,
+            optimizer=optimizer,
+            cards=cards,
+            choose_batch=choose_batch,
+            halt_batch=halt_batch,
+            anchor_lambda=anchor_lambda,
+        )
+
+        self.episode_count += len(rewards)
+
+        return {
+            "loss": loss,
+            "episodes": len(rewards),
+            "decisions": len(actions),
+        }
+
+    def store_rollout_in_replay(
+        self,
+        rollout_output,
+        rewards: list[float],
+        replay_buffer,
+    ) -> int:
+        if len(rollout_output.results) != len(rewards):
+            raise ValueError(
+                "rollout results and rewards must have the same length"
+            )
+
+        if (
+            len(rollout_output.decision_states)
+            != len(rollout_output.results)
+            or len(rollout_output.decision_actions)
+            != len(rollout_output.results)
+        ):
+            raise ValueError(
+                "rollout states, actions and results must align"
+            )
+
+        
+
+        # Validate and prepare every episode before mutating replay.
+        prepared_episodes = []
+
+        for index, reward in enumerate(rewards):
+            decision_states = rollout_output.decision_states[index]
+            decision_actions = rollout_output.decision_actions[index]
+
+            if len(decision_states) != len(decision_actions):
+                raise ValueError(
+                    "decision states and actions must have the same length"
+        )
+
+            states, returns = self.prepare_episode(
+                decision_states=decision_states,
+            
+                reward=reward,
+            )
+
+            prepared_episodes.append({
+                "states": states.detach().cpu(),
+                "actions": list(decision_actions),
+                "returns": returns.detach().cpu(),
+                "domain": rollout_output.results[index].ep_type,
+                "age": 0,
+            })
+
+        # Only mutate replay after all validation/preparation succeeds.
+        replay_buffer.increment_ages()
+
+        for replay_episode in prepared_episodes:
+            replay_buffer.add(replay_episode)
+
+        return len(prepared_episodes)
+
+    def train_from_replay(
+        self,
+        replay_buffer,
+        sample_size: int,
+        cards: torch.Tensor,
+        heads,
+        optimizer,
+        anchor_lambda: float = 0.0,
+    ) -> dict:
+        replay_episodes = replay_buffer.sample_age_banded(
+            size=sample_size
+        )
+
+        if not replay_episodes:
+            raise ValueError("replay buffer is empty")
+
+        state_batches = []
+        action_batch = []
+        return_batches = []
+
+        for episode in replay_episodes:
+            states = episode["states"]
+            actions = episode["actions"]
+            returns = episode["returns"]
+
+            if len(states) != len(actions) or len(states) != len(returns):
+                raise ValueError(
+                    "replay states, actions and returns must align"
+                )
+
+            state_batches.append(states)
+            action_batch.extend(actions)
+            return_batches.append(returns)
+
+        states = torch.cat(
+            state_batches,
+            dim=0,
+        )
+
+        returns = torch.cat(
+            return_batches,
+            dim=0,
+        )
+
+
+        reference_parameter = next(heads.parameters())
+
+        states = states.to(
+            device=reference_parameter.device,
+            dtype=reference_parameter.dtype,
+        )
+
+        returns = returns.to(
+            device=reference_parameter.device,
+            dtype=reference_parameter.dtype,
+        )
+
+
+        cards = cards.to(
+            device=reference_parameter.device,
+            dtype=reference_parameter.dtype,
+        )
+
+        choose_batch, halt_batch = self.extract_action_batches(
+            states=states,
+            actions=action_batch,
+            returns=returns,
+        )
+
+        loss = self.train_action_value_step(
+            heads=heads,
+            optimizer=optimizer,
+            cards=cards,
+            choose_batch=choose_batch,
+            halt_batch=halt_batch,
+            anchor_lambda=anchor_lambda,
+        )
+
+        return {
+            "loss": loss,
+            "replay_episodes": len(replay_episodes),
+            "decisions": len(action_batch),
+        }
+
+    def consolidate(
+        self,
+        replay_buffer,
+        sample_size: int,
+        cards: torch.Tensor,
+        heads,
+        optimizer,
+        anchor_lambda: float = 0.0,
+    ) -> dict:
+        replay_episodes = replay_buffer.sample_domain_balanced(
+            size=sample_size
+        )
+
+        if not replay_episodes:
+            raise ValueError("replay buffer is empty")
+
+        state_batches = []
+        action_batch = []
+        return_batches = []
+
+        for episode in replay_episodes:
+            states = episode["states"]
+            actions = episode["actions"]
+            returns = episode["returns"]
+
+            if len(states) != len(actions) or len(states) != len(returns):
+                raise ValueError(
+                    "replay states, actions and returns must align"
+                )
+
+            state_batches.append(states)
+            action_batch.extend(actions)
+            return_batches.append(returns)
+
+        states = torch.cat(
+            state_batches,
+            dim=0,
+        )
+
+        returns = torch.cat(
+            return_batches,
+            dim=0,
+        )
+
+        reference_parameter = next(heads.parameters())
+
+        states = states.to(
+            device=reference_parameter.device,
+            dtype=reference_parameter.dtype,
+        )
+
+        returns = returns.to(
+            device=reference_parameter.device,
+            dtype=reference_parameter.dtype,
+        )
+
+        cards = cards.to(
+            device=reference_parameter.device,
+            dtype=reference_parameter.dtype,
+      
+      )
+
+        choose_batch, halt_batch = self.extract_action_batches(
+            states=states,
+            actions=action_batch,
+            returns=returns,
+        )
+
+        loss = self.train_action_value_step(
+            heads=heads,
+            optimizer=optimizer,
+            cards=cards,
+            choose_batch=choose_batch,
+            halt_batch=halt_batch,
+            anchor_lambda=anchor_lambda,
+        )
+
+        # Consolidation completed successfully.
+        # The newly updated parameters become the new stable anchor.
+        self.set_anchor(heads)
+
+        return {
+            "loss": loss,
+            "replay_episodes": len(replay_episodes),
+            "decisions": len(action_batch),
+            "anchor_reset": True,
+        }
+
+    def set_anchor(self, heads) -> None:
+        self.anchor_state = {
+            name: parameter.detach().clone()
+            for name, parameter in heads.named_parameters()
+        }
+
+    def anchor_penalty(self, heads) -> torch.Tensor:
+        if self.anchor_state is None:
+            raise ValueError("anchor has not been set")
+
+        current_parameter_names = {
+            name
+            for name, _ in heads.named_parameters()
+            }
+
+        anchor_parameter_names = set(
+            self.anchor_state.keys()
+            )
+
+        if current_parameter_names != anchor_parameter_names:
+            raise ValueError(
+                "anchor state is incompatible with current heads"
+        )
+
+        penalties = []
+
+        for name, parameter in heads.named_parameters():
+            anchor_parameter = self.anchor_state[name]
+
+            if anchor_parameter.shape != parameter.shape:
+                raise ValueError(
+                    "anchor state is incompatible with current heads"
+            )
+
+            anchor_parameter = anchor_parameter.to(
+                device=parameter.device,
+                dtype=parameter.dtype,
+            )
+
+            penalties.append(
+                torch.mean(
+                    (parameter - anchor_parameter) ** 2
+                )
+            )
+
+        return torch.stack(penalties).mean()
     
+    def save_checkpoint(
+        self,
+        path,
+        heads,
+        optimizer,
+        metadata=None,
+    ) -> None:
+        checkpoint = {
+            "heads_state_dict": heads.state_dict(),
+            "optimizer_state_dict": optimizer.state_dict(),
+            "episode_count": self.episode_count,
+            "gamma": self.gamma,
+            "anchor_state": (
+                None
+                if self.anchor_state is None
+                else {
+                    name: parameter.detach().cpu().clone()
+                    for name, parameter in self.anchor_state.items()
+                }
+            ),
+            "metadata": (
+                {}
+                if metadata is None
+                else dict(metadata)
+            ),
+        }
+
+        torch.save(
+            checkpoint,
+            path,
+        )
+
+    def load_checkpoint(
+        self,
+        path,
+        heads,
+        optimizer,
+    ) -> dict:
+        checkpoint = torch.load(
+            path,
+            map_location="cpu",
+            weights_only=False,
+        )
+
+        heads.load_state_dict(
+            checkpoint["heads_state_dict"]
+        )
+
+        optimizer.load_state_dict(
+            checkpoint["optimizer_state_dict"]
+        )
+
+        self.episode_count = checkpoint[
+            "episode_count"
+        ]
+
+        self.gamma = checkpoint["gamma"]
+
+        anchor_state = checkpoint.get(
+            "anchor_state"
+        )
+
+        self.anchor_state = (
+            None
+            if anchor_state is None
+            else {
+                name: parameter.detach().clone()
+                for name, parameter in anchor_state.items()
+            }
+        )
+
+        # Old checkpoints may not contain metadata.
+        return checkpoint.get(
+            "metadata",
+            {},
+        )
+
+        
     def update(
         self,
         reward: float,
